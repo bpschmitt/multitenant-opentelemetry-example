@@ -1,0 +1,94 @@
+{{- if and .Values.loadgen.enabled (eq .Values.loadgen.mode "job") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.loadgen.name }}-job
+  labels:
+    app: {{ .Values.loadgen.name }}
+    tenant: {{ .Values.global.tenantId }}
+    component: loadgen
+spec:
+  ttlSecondsAfterFinished: 3600  # Clean up after 1 hour
+  backoffLimit: 0  # Don't retry on failure
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.loadgen.name }}
+        tenant: {{ .Values.global.tenantId }}
+        component: loadgen
+    spec:
+      restartPolicy: Never
+      {{- if or .Values.global.imagePullSecrets .Values.loadgen.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+        {{- range .Values.loadgen.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+      - name: loadgen
+        {{- $registry := .Values.global.imageRegistry }}
+        {{- $repo := .Values.loadgen.image.repository }}
+        {{- $tag := .Values.loadgen.image.tag }}
+        {{- if $registry }}
+        image: "{{ $registry }}/{{ $repo }}:{{ $tag }}"
+        {{- else }}
+        image: "{{ $repo }}:{{ $tag }}"
+        {{- end }}
+        imagePullPolicy: {{ .Values.loadgen.image.pullPolicy | default .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+        command: ["/app/run-headless.sh"]
+        env:
+        {{- if .Values.global.envs }}
+        {{- include "demo-app.processEnvs" (dict "envs" .Values.global.envs "ctx" .) | nindent 8 }}
+        {{- end }}
+        {{- if .Values.loadgen.env }}
+        {{- include "demo-app.processEnvs" (dict "envs" .Values.loadgen.env "exclude" (list "TARGET_HOST" "OTEL_SERVICE_NAME") "ctx" .) | nindent 8 }}
+        {{- end }}
+        {{- if .Values.loadgen.env.TARGET_HOST }}
+        - name: TARGET_HOST
+          value: {{ .Values.loadgen.env.TARGET_HOST | quote }}
+        {{- end }}
+        {{- if .Values.loadgen.env.OTEL_SERVICE_NAME }}
+        - name: OTEL_SERVICE_NAME
+          value: "{{ .Values.loadgen.env.OTEL_SERVICE_NAME }}-{{ .Values.global.tenantId }}"
+        {{- else }}
+        - name: OTEL_SERVICE_NAME
+          value: "loadgen-service-{{ .Values.global.tenantId }}"
+        {{- end }}
+        - name: USERS
+          value: {{ .Values.loadgen.job.users | quote }}
+        - name: SPAWN_RATE
+          value: {{ .Values.loadgen.job.spawnRate | quote }}
+        - name: RUN_TIME
+          value: {{ .Values.loadgen.job.runTime | quote }}
+        - name: OTEL_SERVICE_NAME
+          value: "{{ .Values.loadgen.env.OTEL_SERVICE_NAME }}-{{ .Values.global.tenantId }}"
+        - name: TENANT_ID
+          value: {{ .Values.global.tenantId | quote }}
+        {{- if .Values.global.useNodeLocalEndpoint }}
+        - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTLP_PORT
+          value: {{ .Values.global.otlpPort | quote }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://$(NODE_IP):$(OTLP_PORT)"
+        {{- else }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ .Values.global.otlpEndpoint | quote }}
+        {{- end }}
+        - name: K8S_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: K8S_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        resources:
+          {{- toYaml .Values.loadgen.resources | nindent 10 }}
+{{- end }}
+
