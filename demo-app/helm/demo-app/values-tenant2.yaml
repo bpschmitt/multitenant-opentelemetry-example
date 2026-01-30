@@ -12,17 +12,19 @@ global:
   # imageRegistry: "ghcr.io/myorg"
   # imageRegistry: "myregistry.io"
   # Global environment variables (applied to all services)
-  # Supports both string values and valueFrom objects (for downward API, secrets, configmaps)
+  # Supports both value and valueFrom objects (for downward API, secrets, configmaps)
   envs:
-    K8S_POD_IP:
+    - name: K8S_POD_IP
       valueFrom:
         fieldRef:
           fieldPath: status.podIP
-    OTEL_RESOURCE_ATTRIBUTES: "k8s.pod.ip=$(K8S_POD_IP)"
+    - name: OTEL_LOGS_EXPORTER
+      value: "none"
 
 # You can override any values here for tenant 1
 # For example, different error rates, resource limits, or images
 sender:
+  name: sender-service-tenant2
   # Override image repository and tag if needed
   image:
     repository: "sender"  # Relative to global.imageRegistry if set
@@ -30,10 +32,24 @@ sender:
   #   tag: "v1.0.0"
     pullPolicy: "Always"  # Override pull policy
   env:
-    ERROR_RATE: "0.0"
-    LATENCY_MS: "0"
+    - name: OTEL_SERVICE_NAME
+      value: "sender-service-tenant2"
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME)"
+    - name: ERROR_RATE
+      value: "0.0"
+    - name: LATENCY_MS
+      value: "0"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi
 
 receiver:
+  name: receiver-service-tenant2
   # Override image repository and tag if needed
   image:
     repository: "receiver"  # Relative to global.imageRegistry if set
@@ -41,9 +57,23 @@ receiver:
   #   tag: "v1.0.0"
     pullPolicy: "Always"  # Override pull policy
   env:
-    ERROR_RATE: "0.3"
-    LATENCY_MS: "0"
-    PROCESSING_TIME_MS: "300"
+    - name: OTEL_SERVICE_NAME
+      value: "receiver-service-tenant2"
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME)"
+    - name: ERROR_RATE
+      value: "0.3"
+    - name: LATENCY_MS
+      value: "0"
+    - name: PROCESSING_TIME_MS
+      value: "300"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi
 
 loadgen:
   enabled: true  # Disabled by default - enable when needed
@@ -66,15 +96,15 @@ loadgen:
   #   spawnRate: 2  # Users to spawn per second
   #   runTime: "5m"  # Duration (e.g., "5m", "1h", "30s")
   env:
-    TARGET_HOST: "http://sender.tenant2.svc.cluster.local:8000"  # Sends load to sender service only
+    - name: TARGET_HOST
+      value: "http://sender-service-tenant2.tenant2-demo.svc.cluster.local:8000"  # Sends load to sender service only
   #   USERS: "10"
   #   SPAWN_RATE: "2"
   #   RUN_TIME: "5m"
-  #   OTEL_SERVICE_NAME: "loadgen-service"
-  # resources:
-  #   limits:
-  #     cpu: 500m
-  #     memory: 512Mi
-  #   requests:
-  #     cpu: 200m
-  #     memory: 256Mi
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi

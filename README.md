@@ -36,22 +36,40 @@ multitenant-opentelemetry-example/
 
 Choose either deployment or daemonset mode based on your needs:
 
-**Deployment Mode** (recommended for centralized collection):
+**Deployment Mode** (recommended for centralized collection and multi-tenant routing):
 ```bash
-# See INSTALL.md for detailed instructions
+# Create required secrets first (see INSTALL.md)
+kubectl create namespace otel-collector
+kubectl create secret generic newrelic-license-key \
+  --from-literal=license-key='YOUR_NEW_RELIC_LICENSE_KEY' \
+  -n otel-collector
+kubectl create secret generic newrelic-license-key-tenant1 \
+  --from-literal=license-key='YOUR_TENANT1_LICENSE_KEY' \
+  -n otel-collector
+kubectl create secret generic newrelic-license-key-tenant2 \
+  --from-literal=license-key='YOUR_TENANT2_LICENSE_KEY' \
+  -n otel-collector
+
+# Install the collector
 helm install opentelemetry-collector open-telemetry/opentelemetry-collector \
   --namespace otel-collector \
   --create-namespace \
   --values deployment/values.yaml
 ```
 
-**Daemonset Mode** (recommended for node-level metrics and logs):
+**Daemonset Mode** (recommended for node-level metrics and logs, forwards to deployment gateway):
 ```bash
-helm install opentelemetry-collector open-telemetry/opentelemetry-collector \
+# Install deployment gateway first (see above)
+# Then install daemonset (use a different release name to avoid conflicts)
+helm install opentelemetry-collector-daemonset open-telemetry/opentelemetry-collector \
   --namespace otel-collector \
   --create-namespace \
   --values daemonset/values.yaml
 ```
+
+**Note**: If you install both deployment and daemonset, use different Helm release names (e.g., `opentelemetry-collector` for deployment and `opentelemetry-collector-daemonset` for daemonset).
+
+**Hybrid Mode** (recommended): Deploy both - daemonset for node-level collection, deployment for centralized routing.
 
 📖 **Full installation instructions**: See [INSTALL.md](INSTALL.md)
 
@@ -61,6 +79,7 @@ helm install opentelemetry-collector open-telemetry/opentelemetry-collector \
 cd demo-app
 
 # Build Docker images (see demo-app/README.md for details)
+# Update imageRegistry in values-tenant1.yaml and values-tenant2.yaml first
 make build
 
 # Deploy tenant 1
@@ -76,17 +95,55 @@ helm upgrade --install demo-app-tenant2 ./helm/demo-app \
   -f ./helm/demo-app/values-tenant2.yaml
 ```
 
+**Note**: The demo app is configured to use node-local endpoints by default (for daemonset mode). If using deployment mode only, update the values files to set `useNodeLocalEndpoint: false` and configure `otlpEndpoint`.
+
 📖 **Full demo app documentation**: See [demo-app/README.md](demo-app/README.md)
+
+## 🏗️ Architecture
+
+### Multi-Tenant Routing
+
+This example demonstrates a multi-tenant OpenTelemetry collection architecture:
+
+1. **Application Layer**: Demo applications deployed in separate Kubernetes namespaces (`tenant1`, `tenant2`)
+2. **Collection Layer**: 
+   - **Daemonset Collectors**: Collect node-level metrics, logs, and kubelet metrics from each node
+   - **Deployment Gateway**: Centralized collector that receives telemetry from daemonset collectors and applications
+3. **Routing Layer**: OpenTelemetry routing connectors route telemetry based on `k8s.namespace.name` attribute:
+   - `tenant1` namespace → `otlphttp/tenant1` exporter (uses `NEW_RELIC_LICENSE_KEY_TENANT1`)
+   - `tenant2` namespace → `otlphttp/tenant2` exporter (uses `NEW_RELIC_LICENSE_KEY_TENANT2`)
+   - Other namespaces → `otlphttp/newrelic` exporter (uses `NEW_RELIC_LICENSE_KEY`)
+4. **Export Layer**: Each tenant's telemetry is exported to New Relic using tenant-specific license keys
+
+### Data Flow
+
+```
+Application Pods (tenant1/tenant2)
+    ↓ (OTLP)
+Daemonset Collectors (per node)
+    ↓ (OTLP HTTP)
+Deployment Gateway Collector
+    ↓ (Routing Connectors)
+Tenant-Specific Exporters
+    ↓ (OTLP HTTP)
+New Relic (per-tenant accounts)
+```
+
+### Deployment Modes
+
+- **Deployment Mode Only**: Applications send directly to deployment collector, which handles routing
+- **Hybrid Mode** (Recommended): Daemonset collectors forward to deployment gateway for centralized routing and node-level collection
 
 ## 🎯 Features
 
 ### OpenTelemetry Collector
 
-- **Deployment Mode**: Centralized collection, Kubernetes events, cluster metrics
-- **Daemonset Mode**: Node-level metrics, host logs, kubelet metrics
-- **Multi-tenant Support**: Routes telemetry by tenant ID
-- **New Relic Integration**: Configured to export to New Relic OTLP endpoint
+- **Deployment Mode**: Centralized collection, Kubernetes events, cluster metrics, multi-tenant routing
+- **Daemonset Mode**: Node-level metrics, host logs, kubelet metrics (can forward to deployment gateway)
+- **Multi-tenant Support**: Routes telemetry by namespace/tenant ID using routing connectors
+- **New Relic Integration**: Configured to export to New Relic OTLP endpoint with per-tenant license keys
 - **Resource Attributes**: Automatically enriches telemetry with Kubernetes metadata
+- **Hybrid Architecture**: Daemonset collectors can forward to deployment gateway for centralized routing
 
 ### Demo Application
 
@@ -113,6 +170,9 @@ All telemetry includes:
 - `service.name` - Service identifier
 - `tenant.id` - Tenant identifier for multi-tenant filtering
 - `service.version` - Application version
+- `k8s.namespace.name` - Kubernetes namespace (used for routing)
+- `k8s.pod.name` - Kubernetes pod name
+- `k8s.pod.ip` - Kubernetes pod IP address
 
 ## 🔧 Configuration
 
@@ -121,9 +181,29 @@ All telemetry includes:
 Configuration files are in `deployment/values.yaml` and `daemonset/values.yaml`. Key settings:
 
 - **OTLP Receivers**: Accept telemetry from applications
-- **New Relic Exporter**: Sends telemetry to New Relic
-- **Processors**: Resource detection, batch processing, tenant routing
-- **Pipelines**: Configured for traces, metrics, and logs
+- **New Relic Exporters**: Multiple exporters configured for per-tenant routing
+- **Routing Connectors**: Routes telemetry by namespace to tenant-specific pipelines
+- **Processors**: Resource detection, batch processing, cumulative-to-delta conversion, transforms
+- **Pipelines**: Configured for traces, metrics, and logs with tenant-specific routing
+
+#### Deployment Mode Multi-Tenant Routing
+
+The deployment mode uses routing connectors to route telemetry based on Kubernetes namespace:
+- Telemetry from `tenant1` namespace → `otlphttp/tenant1` exporter
+- Telemetry from `tenant2` namespace → `otlphttp/tenant2` exporter
+- Other namespaces → default `otlphttp/newrelic` exporter
+
+This requires separate New Relic license keys for each tenant:
+- `newrelic-license-key` (default)
+- `newrelic-license-key-tenant1`
+- `newrelic-license-key-tenant2`
+
+#### Daemonset Mode Gateway Pattern
+
+The daemonset mode is configured to forward telemetry to a deployment gateway:
+- Collects node-level metrics, logs, and kubelet metrics
+- Forwards to `opentelemetry-collector-deployment.otel-collector.svc.cluster.local:4318`
+- The deployment gateway then handles multi-tenant routing
 
 ### Demo Application
 
@@ -195,12 +275,23 @@ curl -X POST http://localhost:8000/send \
 
 2. **Check collector logs:**
    ```bash
+   # Deployment mode (adjust release name if different)
    kubectl logs -n otel-collector -l app.kubernetes.io/name=opentelemetry-collector
+   
+   # Daemonset mode (adjust release name if different)
+   kubectl logs -n otel-collector -l app.kubernetes.io/name=opentelemetry-collector
+   # Or by pod name
+   kubectl logs -n otel-collector <daemonset-pod-name>
    ```
 
 3. **Verify OTLP endpoint configuration:**
-   - For deployment mode: Use service endpoint
-   - For daemonset mode: Use node IP (configured via environment variables)
+   - For deployment mode: Use service endpoint `opentelemetry-collector.otel-collector.svc.cluster.local:4317`
+   - For daemonset mode: Use node IP (configured automatically via `status.hostIP`)
+
+4. **Check routing configuration:**
+   - Verify telemetry is being routed correctly by namespace
+   - Check that tenant-specific exporters are receiving data
+   - Review collector config for routing connector setup
 
 ### Demo App Not Sending Telemetry
 
@@ -226,7 +317,11 @@ curl -X POST http://localhost:8000/send \
 - Helm 3.x
 - kubectl configured
 - Docker (for building images)
-- New Relic account (or modify exporter for your backend)
+- New Relic account with license keys:
+  - Default license key (for non-tenant namespaces)
+  - Tenant 1 license key (optional, for tenant1 namespace)
+  - Tenant 2 license key (optional, for tenant2 namespace)
+- Docker registry access (for pushing demo app images)
 
 ## 📝 License
 

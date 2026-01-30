@@ -38,24 +38,17 @@ spec:
         {{- else }}
         image: "{{ $repo }}:{{ $tag }}"
         {{- end }}
-        imagePullPolicy: {{ .Values.receiver.image.pullPolicy | default .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+        imagePullPolicy: {{ .Values.receiver.image.pullPolicy | default .Values.global.imagePullPolicy }}
         ports:
         - name: http
           containerPort: 8000
           protocol: TCP
         env:
         {{- if .Values.global.envs }}
-        {{- include "demo-app.processEnvs" (dict "envs" .Values.global.envs "ctx" .) | nindent 8 }}
+        {{- include "demo-app.processEnvsList" (dict "envs" .Values.global.envs "ctx" .) | nindent 8 }}
         {{- end }}
         {{- if .Values.receiver.env }}
-        {{- include "demo-app.processEnvs" (dict "envs" .Values.receiver.env "exclude" (list "OTEL_SERVICE_NAME") "ctx" .) | nindent 8 }}
-        {{- end }}
-        {{- if .Values.receiver.env.OTEL_SERVICE_NAME }}
-        - name: OTEL_SERVICE_NAME
-          value: "{{ .Values.receiver.env.OTEL_SERVICE_NAME }}-{{ .Values.global.tenantId }}"
-        {{- else }}
-        - name: OTEL_SERVICE_NAME
-          value: "receiver-service-{{ .Values.global.tenantId }}"
+        {{- include "demo-app.processEnvsList" (dict "envs" .Values.receiver.env "ctx" .) | nindent 8 }}
         {{- end }}
         - name: TENANT_ID
           value: {{ .Values.global.tenantId | quote }}
@@ -72,12 +65,6 @@ spec:
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: {{ .Values.global.otlpEndpoint | quote }}
         {{- end }}
-        - name: ERROR_RATE
-          value: {{ .Values.receiver.env.ERROR_RATE | quote }}
-        - name: LATENCY_MS
-          value: {{ .Values.receiver.env.LATENCY_MS | quote }}
-        - name: PROCESSING_TIME_MS
-          value: {{ .Values.receiver.env.PROCESSING_TIME_MS | quote }}
         - name: K8S_NAMESPACE
           valueFrom:
             fieldRef:

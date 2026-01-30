@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from opentelemetry import trace, metrics
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -22,10 +23,11 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-from opentelemetry._logs import set_logger_provider
+# OpenTelemetry logging imports (commented out - using STDOUT only)
+# from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+# from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+# from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+# from opentelemetry._logs import set_logger_provider
 
 # Configuration from environment variables
 SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "receiver-service")
@@ -97,26 +99,61 @@ processing_time = meter.create_histogram(
     unit="s"
 )
 
-# Logs
-logger_provider = LoggerProvider(resource=resource)
-set_logger_provider(logger_provider)
-logger_provider.add_log_record_processor(
-    BatchLogRecordProcessor(OTLPLogExporter(endpoint=OTLP_ENDPOINT))
-)
+# OpenTelemetry logging setup (commented out - using STDOUT only)
+# logger_provider = LoggerProvider(resource=resource)
+# set_logger_provider(logger_provider)
+# logger_provider.add_log_record_processor(
+#     BatchLogRecordProcessor(OTLPLogExporter(endpoint=OTLP_ENDPOINT))
+# )
 
 # Configure Python logging to use OpenTelemetry
-handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
-logging.basicConfig(level=logging.INFO, handlers=[handler])
+# handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
+# logging.basicConfig(level=logging.INFO, handlers=[handler])
+
+# Configure standard Python logging to STDOUT
+# Custom formatter that includes trace context when available
+class TraceContextFormatter(logging.Formatter):
+    def format(self, record):
+        # LoggingInstrumentor adds otelTraceID and otelSpanID to the record
+        trace_id = getattr(record, 'otelTraceID', None) or ''
+        span_id = getattr(record, 'otelSpanID', None) or ''
+        
+        # Set as record attributes for structured logging
+        record.trace_id = trace_id
+        record.span_id = span_id
+        
+        # Include trace context in the log output
+        if trace_id and span_id:
+            record.trace_context = f"[trace_id={trace_id} span_id={span_id}]"
+        else:
+            record.trace_context = ""
+        
+        return super().format(record)
+
+handler = logging.StreamHandler()
+formatter = TraceContextFormatter(
+    '%(asctime)s - %(name)s - %(levelname)s %(trace_context)s - %(message)s'
+)
+handler.setFormatter(formatter)
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[handler]
+)
 logger = logging.getLogger(__name__)
+
+# Instrument logging to automatically inject trace context
+# Note: We use a custom formatter above, so set_logging_format is not needed
+LoggingInstrumentor().instrument()
 
 # Log OTLP endpoint configuration
 logger.info(
     f"OTLP endpoint configured: {OTLP_ENDPOINT}",
     extra={
-        "otlp_endpoint": OTLP_ENDPOINT,
-        "node_ip": NODE_IP,
-        "tenant_id": TENANT_ID,
-        "service": SERVICE_NAME
+        "otlp.endpoint": OTLP_ENDPOINT,
+        "k8s.node.ip": NODE_IP,
+        "tenant.id": TENANT_ID,
+        "service.name": SERVICE_NAME
     }
 )
 
@@ -133,17 +170,6 @@ FastAPIInstrumentor.instrument_app(
     client_request_hook=None,
     tracer_provider=trace_provider
 )
-
-# Get current span context for logging
-def get_trace_context():
-    """Get current trace context for logging"""
-    span = trace.get_current_span()
-    if span and span.get_span_context().is_valid:
-        trace_id = format(span.get_span_context().trace_id, '032x')
-        span_id = format(span.get_span_context().span_id, '016x')
-        return {"trace_id": trace_id, "span_id": span_id}
-    return {}
-
 
 @app.get("/health")
 async def health():
@@ -180,9 +206,8 @@ async def simulate_database_call(duration_ms: int):
         logger.debug(
             "Database query completed",
             extra={
-                "tenant_id": TENANT_ID,
-                "records": result["records"],
-                **get_trace_context()
+                "tenant.id": TENANT_ID,
+                "db.records.count": result["records"]
             }
         )
         
@@ -212,16 +237,13 @@ async def process_request(data: dict):
         current_span.set_attribute("app.request.id", request_id)
         current_span.set_attribute("app.sender.service", sender)
     
-    # Add trace context to logs
-    trace_context = get_trace_context()
     logger.info(
         "Received request for processing",
         extra={
-            "request_id": request_id,
-            "sender": sender,
-            "tenant_id": tenant_id,
-            "service": SERVICE_NAME,
-            **trace_context
+            "request.id": request_id,
+            "sender.service": sender,
+            "tenant.id": tenant_id,
+            "service.name": SERVICE_NAME
         }
     )
     
@@ -233,7 +255,7 @@ async def process_request(data: dict):
     
     # Simulate errors if configured
     if random.random() < ERROR_RATE:
-        errors_total.add(1, {"tenant_id": tenant_id, "service": SERVICE_NAME, "error_type": "simulated"})
+        errors_total.add(1, {"tenant.id": tenant_id, "service.name": SERVICE_NAME, "error.type": "simulated"})
         if current_span:
             current_span.set_status(trace.Status(trace.StatusCode.ERROR, "Simulated error"))
             current_span.set_attribute("error.type", "simulated_error")
@@ -241,10 +263,9 @@ async def process_request(data: dict):
         logger.error(
             "Simulated error occurred during processing",
             extra={
-                "request_id": request_id,
-                "tenant_id": tenant_id,
-                "service": SERVICE_NAME,
-                **trace_context
+                "request.id": request_id,
+                "tenant.id": tenant_id,
+                "service.name": SERVICE_NAME
             }
         )
         raise HTTPException(status_code=500, detail="Simulated processing error")
@@ -264,7 +285,7 @@ async def process_request(data: dict):
             await asyncio.sleep(0.01)  # 10ms additional processing
             
             processing_duration = time.time() - start_time
-            processing_time.record(processing_duration, {"tenant_id": tenant_id, "service": SERVICE_NAME})
+            processing_time.record(processing_duration, {"tenant.id": tenant_id, "service.name": SERVICE_NAME})
             
             result = {
                 "status": "processed",
@@ -289,16 +310,15 @@ async def process_request(data: dict):
             logger.info(
                 "Request processed successfully",
                 extra={
-                    "request_id": request_id,
-                    "tenant_id": tenant_id,
-                    "processing_time": processing_duration,
-                    **trace_context
+                    "request.id": request_id,
+                    "tenant.id": tenant_id,
+                    "processing.duration": processing_duration
                 }
             )
             
             total_duration = time.time() - start_time
-            requests_total.add(1, {"tenant_id": tenant_id, "service": SERVICE_NAME, "status": "success"})
-            request_duration.record(total_duration, {"tenant_id": tenant_id, "service": SERVICE_NAME})
+            requests_total.add(1, {"tenant.id": tenant_id, "service.name": SERVICE_NAME, "status": "success"})
+            request_duration.record(total_duration, {"tenant.id": tenant_id, "service.name": SERVICE_NAME})
             
             return result
             
@@ -312,14 +332,13 @@ async def process_request(data: dict):
             # Exception recording automatically sets error.type, error.message, error.stack
         
         duration = time.time() - start_time
-        errors_total.add(1, {"tenant_id": tenant_id, "service": SERVICE_NAME, "error_type": "unknown"})
+        errors_total.add(1, {"tenant.id": tenant_id, "service.name": SERVICE_NAME, "error.type": "unknown"})
         logger.error(
             "Unexpected error during processing",
             extra={
-                "request_id": request_id,
-                "tenant_id": tenant_id,
-                "error": str(e),
-                **trace_context
+                "request.id": request_id,
+                "tenant.id": tenant_id,
+                "error.message": str(e)
             },
             exc_info=True
         )
@@ -347,5 +366,7 @@ async def prometheus_metrics():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Disable uvicorn access logs - HTTP request details are already captured
+    # in OpenTelemetry traces via FastAPI instrumentation
+    uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False, log_config=None)
 

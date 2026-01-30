@@ -20,21 +20,17 @@ global:
   imagePullPolicy: IfNotPresent
   # Global environment variables (applied to all services)
   # Can be overridden by service-specific env vars
-  # Supports both string values and valueFrom objects (for downward API, secrets, configmaps)
+  # Supports both value and valueFrom objects (for downward API, secrets, configmaps)
   # Example:
   #   envs:
-  #     COMMON_VAR: "common-value"
-  #     K8S_POD_IP:
+  #     - name: COMMON_VAR
+  #       value: "common-value"
+  #     - name: K8S_POD_IP
   #       valueFrom:
   #         fieldRef:
   #           fieldPath: status.podIP
-  envs: {}
+  envs: []
 
-# Image settings (deprecated - use global.imageRegistry and service-specific image settings)
-image:
-  repository: "demo-app"
-  pullPolicy: IfNotPresent
-  # tag: "" # Will be set per service
 
 # Sender service configuration
 sender:
@@ -45,7 +41,7 @@ sender:
     # Examples:
     #   - If global.imageRegistry="docker.io/myorg": use "sender" or "myorg/sender"
     #   - If global.imageRegistry="": use "docker.io/myorg/sender" or "myorg/sender"
-    repository: "demo-app/sender"
+    repository: "myorg/sender"
     tag: "latest"
     # Override global image pull policy for this service
     pullPolicy: ""
@@ -56,10 +52,14 @@ sender:
     type: ClusterIP
     port: 8000
   env:
-    OTEL_SERVICE_NAME: "sender-service"
-    RECEIVER_SERVICE_URL: "http://receiver-service:8000"
-    ERROR_RATE: "0.0"
-    LATENCY_MS: "0"
+    - name: OTEL_SERVICE_NAME
+      value: "sender-service"
+    - name: RECEIVER_SERVICE_URL
+      value: "http://receiver-service:8000"
+    - name: ERROR_RATE
+      value: "0.0"
+    - name: LATENCY_MS
+      value: "0"
   resources:
     limits:
       cpu: 200m
@@ -77,7 +77,7 @@ receiver:
     # Examples:
     #   - If global.imageRegistry="docker.io/myorg": use "receiver" or "myorg/receiver"
     #   - If global.imageRegistry="": use "docker.io/myorg/receiver" or "myorg/receiver"
-    repository: "demo-app/receiver"
+    repository: "myorg/receiver"
     tag: "latest"
     # Override global image pull policy for this service
     pullPolicy: ""
@@ -88,10 +88,14 @@ receiver:
     type: ClusterIP
     port: 8000
   env:
-    OTEL_SERVICE_NAME: "receiver-service"
-    ERROR_RATE: "0.0"
-    LATENCY_MS: "0"
-    PROCESSING_TIME_MS: "100"
+    - name: OTEL_SERVICE_NAME
+      value: "receiver-service"
+    - name: ERROR_RATE
+      value: "0.0"
+    - name: LATENCY_MS
+      value: "0"
+    - name: PROCESSING_TIME_MS
+      value: "100"
   resources:
     limits:
       cpu: 200m
@@ -106,7 +110,7 @@ loadgen:
   enabled: false  # Disabled by default - enable when needed
   name: loadgen
   image:
-    repository: "demo-app/loadgen"
+    repository: "myorg/loadgen"
     tag: "latest"
     pullPolicy: ""
     pullSecrets: []
@@ -123,11 +127,16 @@ loadgen:
     spawnRate: 2  # Users to spawn per second
     runTime: "5m"  # Duration (e.g., "5m", "1h", "30s")
   env:
-    TARGET_HOST: "http://sender:8000"  # Sends load to sender service only
-    USERS: "10"
-    SPAWN_RATE: "2"
-    RUN_TIME: "5m"
-    OTEL_SERVICE_NAME: "loadgen-service"
+    - name: TARGET_HOST
+      value: "http://sender:8000"  # Sends load to sender service only
+    - name: USERS
+      value: "10"
+    - name: SPAWN_RATE
+      value: "2"
+    - name: RUN_TIME
+      value: "5m"
+    - name: OTEL_SERVICE_NAME
+      value: "loadgen-service"
   resources:
     limits:
       cpu: 500m
