@@ -14,6 +14,10 @@ global:
   # Global environment variables (applied to all services)
   # Supports both value and valueFrom objects (for downward API, secrets, configmaps)
   envs:
+    - name: K8S_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
     - name: K8S_POD_IP
       valueFrom:
         fieldRef:
@@ -34,8 +38,10 @@ sender:
   env:
     - name: OTEL_SERVICE_NAME
       value: "sender-service-tenant1"
+    - name: OTEL_SERVICE_INSTANCE_ID
+      value: "$(K8S_POD_NAME)"
     - name: OTEL_RESOURCE_ATTRIBUTES
-      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME)"
+      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME),service.instance.id=$(OTEL_SERVICE_INSTANCE_ID)"
     - name: ERROR_RATE
       value: "0.0"
     - name: LATENCY_MS
@@ -59,10 +65,12 @@ receiver:
   env:
     - name: OTEL_SERVICE_NAME
       value: "receiver-service-tenant1"
+    - name: OTEL_SERVICE_INSTANCE_ID
+      value: "$(K8S_POD_NAME)"
     - name: OTEL_RESOURCE_ATTRIBUTES
-      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME)"
+      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME),service.instance.id=$(OTEL_SERVICE_INSTANCE_ID)"
     - name: ERROR_RATE
-      value: "0.1"
+      value: "0.0"
     - name: LATENCY_MS
       value: "0"
     - name: PROCESSING_TIME_MS
