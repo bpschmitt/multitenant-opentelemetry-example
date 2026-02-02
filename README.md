@@ -31,7 +31,6 @@ multitenant-opentelemetry-example/
 ├── daemonset/               # OpenTelemetry Collector daemonset mode config
 │   ├── daemonset-collector.yaml  # OpenTelemetryCollector CRD
 │   ├── rbac.yaml            # RBAC resources
-│   └── clusterlogs-scc.yaml # OpenShift SCC (optional)
 ├── operator/                # OpenTelemetry Operator configuration
 │   └── values.yaml          # Helm values for OpenTelemetry Operator
 ├── demo-app/                # Multi-tenant demo application
@@ -44,7 +43,6 @@ multitenant-opentelemetry-example/
 │           ├── values.yaml  # Default values
 │           ├── values-tenant1.yaml  # Tenant 1 overrides
 │           └── values-tenant2.yaml  # Tenant 2 overrides
-├── CONFIGURATION.md         # Detailed collector configuration documentation
 └── README.md                # This file
 ```
 
