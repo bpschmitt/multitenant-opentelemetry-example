@@ -35,14 +35,12 @@ kubectl create namespace tenant1-demo
 # Install with Helm (using default images)
 helm install demo-app-tenant1 ./helm/demo-app \
   --namespace tenant1-demo \
-  --values ./helm/demo-app/values-tenant1.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317
+  --values ./helm/demo-app/values-tenant1.yaml
 
 # Or with custom images using global registry
 helm install demo-app-tenant1 ./helm/demo-app \
   --namespace tenant1-demo \
   --values ./helm/demo-app/values-tenant1.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317 \
   --set global.imageRegistry=docker.io/myorg \
   --set sender.image.repository=sender \
   --set sender.image.tag=v1.0.0 \
@@ -406,7 +404,7 @@ Telemetry data is sent to the OpenTelemetry Collector, which should forward it t
 ### Check Collector Logs
 
 ```bash
-kubectl logs -n otel-collector -l app.kubernetes.io/name=opentelemetry-collector --tail=50
+kubectl logs -n observability -l app.kubernetes.io/component=opentelemetry-collector --tail=50
 ```
 
 ### Verify Traces
