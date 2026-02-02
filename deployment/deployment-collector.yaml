@@ -134,7 +134,6 @@ spec:
         logs:
           exporters:
           - otlphttp/newrelic
-          - debug/detailed
           processors:
           - memory_limiter
           - batch
