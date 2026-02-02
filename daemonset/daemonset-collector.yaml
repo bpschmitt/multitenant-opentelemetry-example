@@ -67,10 +67,10 @@ spec:
       batch: {}
       cumulativetodelta: {}
 
-      resourcedetection/env:
-        detectors: [env]
-        timeout: 2s
-        override: false
+      # resourcedetection/env:
+      #   detectors: [env]
+      #   timeout: 2s
+      #   override: false
       
       resource/cluster_name:
         attributes:
@@ -106,6 +106,8 @@ spec:
           - container.image.tag
           - container.image.name
           - k8s.cluster.uid
+          - service.name
+          - service.instance.id
           otel_annotations: true
         filter:
           node_from_env_var: K8S_NODE_NAME
@@ -230,7 +232,6 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
-          - resourcedetection/env
           - resource/cluster_name
           - batch
           exporters:
@@ -241,7 +242,6 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
-          - resourcedetection/env
           - resource/cluster_name
           - batch
           exporters:
@@ -253,9 +253,7 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
-          - resourcedetection/env
           - resource/cluster_name
-          # - resource/entity_type
           - batch
           exporters:
           - otlphttp/gateway
@@ -265,7 +263,6 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
-          - resourcedetection/env
           - resource/cluster_name
           - batch
           exporters:
