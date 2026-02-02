@@ -39,10 +39,7 @@ spec:
         image: "{{ $repo }}:{{ $tag }}"
         {{- end }}
         imagePullPolicy: {{ .Values.loadgen.image.pullPolicy | default .Values.global.imagePullPolicy }}
-        ports:
-        - name: web
-          containerPort: 8089
-          protocol: TCP
+        command: ["/app/run-headless.sh"]
         env:
         {{- if .Values.global.envs }}
         {{- include "demo-app.processEnvsList" (dict "envs" .Values.global.envs "ctx" .) | nindent 8 }}

@@ -11,9 +11,11 @@ import asyncio
 import logging
 import random
 from typing import Optional
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
+import uvicorn
 from opentelemetry import trace, metrics
+from starlette.middleware.base import BaseHTTPMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.sdk.resources import Resource
@@ -77,26 +79,26 @@ metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reade
 metrics.set_meter_provider(metrics_provider)
 meter = metrics.get_meter(__name__)
 
-# Create custom metrics
-requests_total = meter.create_counter(
-    "requests_total",
-    description="Total number of requests",
-    unit="1"
-)
-request_duration = meter.create_histogram(
-    "request_duration_seconds",
-    description="Request duration in seconds",
+# Create HTTP server metrics following OpenTelemetry semantic conventions
+http_server_request_duration = meter.create_histogram(
+    "http.server.request.duration",
+    description="Duration of HTTP server requests",
     unit="s"
 )
-errors_total = meter.create_counter(
-    "errors_total",
-    description="Total number of errors",
-    unit="1"
+http_server_active_requests = meter.create_up_down_counter(
+    "http.server.active_requests",
+    description="Number of active HTTP server requests",
+    unit="{request}"
 )
-processing_time = meter.create_histogram(
-    "processing_time_seconds",
-    description="Processing time in seconds",
-    unit="s"
+http_server_request_body_size = meter.create_histogram(
+    "http.server.request.body.size",
+    description="Size of HTTP request bodies",
+    unit="By"
+)
+http_server_response_body_size = meter.create_histogram(
+    "http.server.response.body.size",
+    description="Size of HTTP response bodies",
+    unit="By"
 )
 
 # OpenTelemetry logging setup (commented out - using STDOUT only)
@@ -159,6 +161,98 @@ logger.info(
 
 # Create FastAPI app
 app = FastAPI(title="Receiver Service", version="1.0.0")
+
+
+# HTTP Server Metrics Middleware
+class HTTPServerMetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        
+        # Extract server attributes
+        server_address = request.url.hostname or SERVICE_NAME
+        server_port = request.url.port or 8000
+        url_scheme = request.url.scheme
+        http_method = request.method
+        http_route = request.url.path  # Route path (e.g., "/process", "/health", "/metrics")
+        
+        # Get request body size if available
+        request_body_size = None
+        if request.headers.get("content-length"):
+            try:
+                request_body_size = int(request.headers.get("content-length", 0))
+            except ValueError:
+                pass
+        
+        # Increment active requests counter
+        http_server_active_requests.add(
+            1,
+            {
+                "server.address": server_address,
+                "server.port": server_port,
+                "http.request.method": http_method,
+                "url.scheme": url_scheme,
+                "http.route": http_route,
+            }
+        )
+        
+        status_code = 500
+        response_body_size = None
+        
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            
+            # Try to get response body size
+            if hasattr(response, "body") and response.body:
+                response_body_size = len(response.body)
+            elif hasattr(response, "content") and response.content:
+                response_body_size = len(response.content)
+            
+            return response
+        except HTTPException as e:
+            status_code = e.status_code
+            raise
+        except Exception as e:
+            status_code = 500
+            raise
+        finally:
+            # Decrement active requests counter
+            http_server_active_requests.add(
+                -1,
+                {
+                    "server.address": server_address,
+                    "server.port": server_port,
+                    "http.request.method": http_method,
+                    "url.scheme": url_scheme,
+                    "http.route": http_route,
+                }
+            )
+            
+            # Calculate duration
+            duration = time.time() - start_time
+            
+            # Record duration metric with required attributes
+            attributes = {
+                "http.request.method": http_method,
+                "http.response.status_code": status_code,
+                "server.address": server_address,
+                "server.port": server_port,
+                "url.scheme": url_scheme,
+                "http.route": http_route,
+            }
+            
+            http_server_request_duration.record(duration, attributes)
+            
+            # Record body size metrics if available
+            if request_body_size is not None and request_body_size > 0:
+                http_server_request_body_size.record(request_body_size, attributes)
+            
+            if response_body_size is not None and response_body_size > 0:
+                http_server_response_body_size.record(response_body_size, attributes)
+
+
+# Add middleware to app
+app.add_middleware(HTTPServerMetricsMiddleware)
 
 # Instrument FastAPI
 # Configure FastAPI instrumentation to capture all routes including health checks
@@ -255,7 +349,6 @@ async def process_request(data: dict):
     
     # Simulate errors if configured
     if random.random() < ERROR_RATE:
-        errors_total.add(1, {"tenant.id": tenant_id, "service.name": SERVICE_NAME, "error.type": "simulated"})
         if current_span:
             current_span.set_status(trace.Status(trace.StatusCode.ERROR, "Simulated error"))
             current_span.set_attribute("error.type", "simulated_error")
@@ -285,7 +378,6 @@ async def process_request(data: dict):
             await asyncio.sleep(0.01)  # 10ms additional processing
             
             processing_duration = time.time() - start_time
-            processing_time.record(processing_duration, {"tenant.id": tenant_id, "service.name": SERVICE_NAME})
             
             result = {
                 "status": "processed",
@@ -312,13 +404,8 @@ async def process_request(data: dict):
                 extra={
                     "request.id": request_id,
                     "tenant.id": tenant_id,
-                    "processing.duration": processing_duration
                 }
             )
-            
-            total_duration = time.time() - start_time
-            requests_total.add(1, {"tenant.id": tenant_id, "service.name": SERVICE_NAME, "status": "success"})
-            request_duration.record(total_duration, {"tenant.id": tenant_id, "service.name": SERVICE_NAME})
             
             return result
             
@@ -331,8 +418,6 @@ async def process_request(data: dict):
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
             # Exception recording automatically sets error.type, error.message, error.stack
         
-        duration = time.time() - start_time
-        errors_total.add(1, {"tenant.id": tenant_id, "service.name": SERVICE_NAME, "error.type": "unknown"})
         logger.error(
             "Unexpected error during processing",
             extra={
@@ -365,7 +450,6 @@ async def prometheus_metrics():
 
 
 if __name__ == "__main__":
-    import uvicorn
     # Disable uvicorn access logs - HTTP request details are already captured
     # in OpenTelemetry traces via FastAPI instrumentation
     uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False, log_config=None)
