@@ -11,10 +11,13 @@ import asyncio
 import logging
 import random
 from typing import Optional
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
+import uvicorn
 from opentelemetry import trace, metrics
+from starlette.middleware.base import BaseHTTPMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -22,10 +25,11 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-from opentelemetry._logs import set_logger_provider
+# OpenTelemetry logging imports (commented out - using STDOUT only)
+# from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+# from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+# from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+# from opentelemetry._logs import set_logger_provider
 
 # Configuration from environment variables
 SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "receiver-service")
@@ -75,53 +79,180 @@ metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reade
 metrics.set_meter_provider(metrics_provider)
 meter = metrics.get_meter(__name__)
 
-# Create custom metrics
-requests_total = meter.create_counter(
-    "requests_total",
-    description="Total number of requests",
-    unit="1"
-)
-request_duration = meter.create_histogram(
-    "request_duration_seconds",
-    description="Request duration in seconds",
+# Create HTTP server metrics following OpenTelemetry semantic conventions
+http_server_request_duration = meter.create_histogram(
+    "http.server.request.duration",
+    description="Duration of HTTP server requests",
     unit="s"
 )
-errors_total = meter.create_counter(
-    "errors_total",
-    description="Total number of errors",
-    unit="1"
+http_server_active_requests = meter.create_up_down_counter(
+    "http.server.active_requests",
+    description="Number of active HTTP server requests",
+    unit="{request}"
 )
-processing_time = meter.create_histogram(
-    "processing_time_seconds",
-    description="Processing time in seconds",
-    unit="s"
+http_server_request_body_size = meter.create_histogram(
+    "http.server.request.body.size",
+    description="Size of HTTP request bodies",
+    unit="By"
+)
+http_server_response_body_size = meter.create_histogram(
+    "http.server.response.body.size",
+    description="Size of HTTP response bodies",
+    unit="By"
 )
 
-# Logs
-logger_provider = LoggerProvider(resource=resource)
-set_logger_provider(logger_provider)
-logger_provider.add_log_record_processor(
-    BatchLogRecordProcessor(OTLPLogExporter(endpoint=OTLP_ENDPOINT))
-)
+# OpenTelemetry logging setup (commented out - using STDOUT only)
+# logger_provider = LoggerProvider(resource=resource)
+# set_logger_provider(logger_provider)
+# logger_provider.add_log_record_processor(
+#     BatchLogRecordProcessor(OTLPLogExporter(endpoint=OTLP_ENDPOINT))
+# )
 
 # Configure Python logging to use OpenTelemetry
-handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
-logging.basicConfig(level=logging.INFO, handlers=[handler])
+# handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
+# logging.basicConfig(level=logging.INFO, handlers=[handler])
+
+# Configure standard Python logging to STDOUT
+# Custom formatter that includes trace context when available
+class TraceContextFormatter(logging.Formatter):
+    def format(self, record):
+        # LoggingInstrumentor adds otelTraceID and otelSpanID to the record
+        trace_id = getattr(record, 'otelTraceID', None) or ''
+        span_id = getattr(record, 'otelSpanID', None) or ''
+        
+        # Set as record attributes for structured logging
+        record.trace_id = trace_id
+        record.span_id = span_id
+        
+        # Include trace context in the log output
+        if trace_id and span_id:
+            record.trace_context = f"[trace_id={trace_id} span_id={span_id}]"
+        else:
+            record.trace_context = ""
+        
+        return super().format(record)
+
+handler = logging.StreamHandler()
+formatter = TraceContextFormatter(
+    '%(asctime)s - %(name)s - %(levelname)s %(trace_context)s - %(message)s'
+)
+handler.setFormatter(formatter)
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[handler]
+)
 logger = logging.getLogger(__name__)
+
+# Instrument logging to automatically inject trace context
+# Note: We use a custom formatter above, so set_logging_format is not needed
+LoggingInstrumentor().instrument()
 
 # Log OTLP endpoint configuration
 logger.info(
     f"OTLP endpoint configured: {OTLP_ENDPOINT}",
     extra={
-        "otlp_endpoint": OTLP_ENDPOINT,
-        "node_ip": NODE_IP,
-        "tenant_id": TENANT_ID,
-        "service": SERVICE_NAME
+        "otlp.endpoint": OTLP_ENDPOINT,
+        "k8s.node.ip": NODE_IP,
+        "tenant.id": TENANT_ID,
+        "service.name": SERVICE_NAME
     }
 )
 
 # Create FastAPI app
 app = FastAPI(title="Receiver Service", version="1.0.0")
+
+
+# HTTP Server Metrics Middleware
+class HTTPServerMetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        
+        # Extract server attributes
+        server_address = request.url.hostname or SERVICE_NAME
+        server_port = request.url.port or 8000
+        url_scheme = request.url.scheme
+        http_method = request.method
+        http_route = request.url.path  # Route path (e.g., "/process", "/health", "/metrics")
+        
+        # Get request body size if available
+        request_body_size = None
+        if request.headers.get("content-length"):
+            try:
+                request_body_size = int(request.headers.get("content-length", 0))
+            except ValueError:
+                pass
+        
+        # Increment active requests counter
+        http_server_active_requests.add(
+            1,
+            {
+                "server.address": server_address,
+                "server.port": server_port,
+                "http.request.method": http_method,
+                "url.scheme": url_scheme,
+                "http.route": http_route,
+            }
+        )
+        
+        status_code = 500
+        response_body_size = None
+        
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            
+            # Try to get response body size
+            if hasattr(response, "body") and response.body:
+                response_body_size = len(response.body)
+            elif hasattr(response, "content") and response.content:
+                response_body_size = len(response.content)
+            
+            return response
+        except HTTPException as e:
+            status_code = e.status_code
+            raise
+        except Exception as e:
+            status_code = 500
+            raise
+        finally:
+            # Decrement active requests counter
+            http_server_active_requests.add(
+                -1,
+                {
+                    "server.address": server_address,
+                    "server.port": server_port,
+                    "http.request.method": http_method,
+                    "url.scheme": url_scheme,
+                    "http.route": http_route,
+                }
+            )
+            
+            # Calculate duration
+            duration = time.time() - start_time
+            
+            # Record duration metric with required attributes
+            attributes = {
+                "http.request.method": http_method,
+                "http.response.status_code": status_code,
+                "server.address": server_address,
+                "server.port": server_port,
+                "url.scheme": url_scheme,
+                "http.route": http_route,
+            }
+            
+            http_server_request_duration.record(duration, attributes)
+            
+            # Record body size metrics if available
+            if request_body_size is not None and request_body_size > 0:
+                http_server_request_body_size.record(request_body_size, attributes)
+            
+            if response_body_size is not None and response_body_size > 0:
+                http_server_response_body_size.record(response_body_size, attributes)
+
+
+# Add middleware to app
+app.add_middleware(HTTPServerMetricsMiddleware)
 
 # Instrument FastAPI
 # Configure FastAPI instrumentation to capture all routes including health checks
@@ -133,17 +264,6 @@ FastAPIInstrumentor.instrument_app(
     client_request_hook=None,
     tracer_provider=trace_provider
 )
-
-# Get current span context for logging
-def get_trace_context():
-    """Get current trace context for logging"""
-    span = trace.get_current_span()
-    if span and span.get_span_context().is_valid:
-        trace_id = format(span.get_span_context().trace_id, '032x')
-        span_id = format(span.get_span_context().span_id, '016x')
-        return {"trace_id": trace_id, "span_id": span_id}
-    return {}
-
 
 @app.get("/health")
 async def health():
@@ -180,9 +300,8 @@ async def simulate_database_call(duration_ms: int):
         logger.debug(
             "Database query completed",
             extra={
-                "tenant_id": TENANT_ID,
-                "records": result["records"],
-                **get_trace_context()
+                "tenant.id": TENANT_ID,
+                "db.records.count": result["records"]
             }
         )
         
@@ -212,16 +331,13 @@ async def process_request(data: dict):
         current_span.set_attribute("app.request.id", request_id)
         current_span.set_attribute("app.sender.service", sender)
     
-    # Add trace context to logs
-    trace_context = get_trace_context()
     logger.info(
         "Received request for processing",
         extra={
-            "request_id": request_id,
-            "sender": sender,
-            "tenant_id": tenant_id,
-            "service": SERVICE_NAME,
-            **trace_context
+            "request.id": request_id,
+            "sender.service": sender,
+            "tenant.id": tenant_id,
+            "service.name": SERVICE_NAME
         }
     )
     
@@ -233,7 +349,6 @@ async def process_request(data: dict):
     
     # Simulate errors if configured
     if random.random() < ERROR_RATE:
-        errors_total.add(1, {"tenant_id": tenant_id, "service": SERVICE_NAME, "error_type": "simulated"})
         if current_span:
             current_span.set_status(trace.Status(trace.StatusCode.ERROR, "Simulated error"))
             current_span.set_attribute("error.type", "simulated_error")
@@ -241,10 +356,9 @@ async def process_request(data: dict):
         logger.error(
             "Simulated error occurred during processing",
             extra={
-                "request_id": request_id,
-                "tenant_id": tenant_id,
-                "service": SERVICE_NAME,
-                **trace_context
+                "request.id": request_id,
+                "tenant.id": tenant_id,
+                "service.name": SERVICE_NAME
             }
         )
         raise HTTPException(status_code=500, detail="Simulated processing error")
@@ -264,7 +378,6 @@ async def process_request(data: dict):
             await asyncio.sleep(0.01)  # 10ms additional processing
             
             processing_duration = time.time() - start_time
-            processing_time.record(processing_duration, {"tenant_id": tenant_id, "service": SERVICE_NAME})
             
             result = {
                 "status": "processed",
@@ -289,16 +402,10 @@ async def process_request(data: dict):
             logger.info(
                 "Request processed successfully",
                 extra={
-                    "request_id": request_id,
-                    "tenant_id": tenant_id,
-                    "processing_time": processing_duration,
-                    **trace_context
+                    "request.id": request_id,
+                    "tenant.id": tenant_id,
                 }
             )
-            
-            total_duration = time.time() - start_time
-            requests_total.add(1, {"tenant_id": tenant_id, "service": SERVICE_NAME, "status": "success"})
-            request_duration.record(total_duration, {"tenant_id": tenant_id, "service": SERVICE_NAME})
             
             return result
             
@@ -311,15 +418,12 @@ async def process_request(data: dict):
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
             # Exception recording automatically sets error.type, error.message, error.stack
         
-        duration = time.time() - start_time
-        errors_total.add(1, {"tenant_id": tenant_id, "service": SERVICE_NAME, "error_type": "unknown"})
         logger.error(
             "Unexpected error during processing",
             extra={
-                "request_id": request_id,
-                "tenant_id": tenant_id,
-                "error": str(e),
-                **trace_context
+                "request.id": request_id,
+                "tenant.id": tenant_id,
+                "error.message": str(e)
             },
             exc_info=True
         )
@@ -346,6 +450,7 @@ async def prometheus_metrics():
 
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Disable uvicorn access logs - HTTP request details are already captured
+    # in OpenTelemetry traces via FastAPI instrumentation
+    uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False, log_config=None)
 

@@ -24,6 +24,76 @@ The application will be deployed twice (once per tenant) in separate Kubernetes 
 - Docker (for building images)
 - OpenTelemetry Collector deployed (see parent directory's INSTALL.md)
 
+## Deployment
+
+### Deploy Tenant 1
+
+```bash
+# Create namespace
+kubectl create namespace tenant1-demo
+
+# Install with Helm (using default images)
+helm install demo-app-tenant1 ./helm/demo-app \
+  --namespace tenant1-demo \
+  --values ./helm/demo-app/values-tenant1.yaml \
+  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317
+
+# Or with custom images using global registry
+helm install demo-app-tenant1 ./helm/demo-app \
+  --namespace tenant1-demo \
+  --values ./helm/demo-app/values-tenant1.yaml \
+  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317 \
+  --set global.imageRegistry=docker.io/myorg \
+  --set sender.image.repository=sender \
+  --set sender.image.tag=v1.0.0 \
+  --set receiver.image.repository=receiver \
+  --set receiver.image.tag=v1.0.0
+
+# Or with full image paths
+helm install demo-app-tenant1 ./helm/demo-app \
+  --namespace tenant1-demo \
+  --values ./helm/demo-app/values-tenant1.yaml \
+  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317 \
+  --set sender.image.repository=myregistry.io/myorg/sender \
+  --set sender.image.tag=v1.0.0 \
+  --set receiver.image.repository=myregistry.io/myorg/receiver \
+  --set receiver.image.tag=v1.0.0
+```
+
+### Deploy Tenant 2
+
+```bash
+# Create namespace
+kubectl create namespace tenant2-demo
+
+# Install with Helm (using default images)
+helm install demo-app-tenant2 ./helm/demo-app \
+  --namespace tenant2-demo \
+  --values ./helm/demo-app/values-tenant2.yaml \
+  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317
+
+# Or with custom images (same options as tenant 1)
+helm install demo-app-tenant2 ./helm/demo-app \
+  --namespace tenant2-demo \
+  --values ./helm/demo-app/values-tenant2.yaml \
+  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317 \
+  --set global.imageRegistry=docker.io/myorg \
+  --set sender.image.repository=sender \
+  --set receiver.image.repository=receiver
+```
+
+### Using Makefile for Deployment
+
+The Makefile supports image overrides:
+
+```bash
+# Deploy with custom registry
+make deploy-tenant1 IMAGE_REGISTRY=docker.io/myorg TAG=v1.0.0
+
+# Deploy with custom registry and tag
+make deploy-tenant2 IMAGE_REGISTRY=ghcr.io/myorg TAG=latest
+```
+
 ## Building the Docker Images
 
 The Makefile supports building multi-platform Docker images (amd64 and arm64) using Docker buildx. This is useful for deploying to mixed-architecture Kubernetes clusters.
@@ -100,76 +170,6 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 ```
 
 Update the `values.yaml` or tenant-specific values files with your image repository.
-
-## Deployment
-
-### Deploy Tenant 1
-
-```bash
-# Create namespace
-kubectl create namespace tenant1-demo
-
-# Install with Helm (using default images)
-helm install demo-app-tenant1 ./helm/demo-app \
-  --namespace tenant1-demo \
-  --values ./helm/demo-app/values-tenant1.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector.otel-collector.svc.cluster.local:4317
-
-# Or with custom images using global registry
-helm install demo-app-tenant1 ./helm/demo-app \
-  --namespace tenant1-demo \
-  --values ./helm/demo-app/values-tenant1.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector.otel-collector.svc.cluster.local:4317 \
-  --set global.imageRegistry=docker.io/myorg \
-  --set sender.image.repository=sender \
-  --set sender.image.tag=v1.0.0 \
-  --set receiver.image.repository=receiver \
-  --set receiver.image.tag=v1.0.0
-
-# Or with full image paths
-helm install demo-app-tenant1 ./helm/demo-app \
-  --namespace tenant1-demo \
-  --values ./helm/demo-app/values-tenant1.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector.otel-collector.svc.cluster.local:4317 \
-  --set sender.image.repository=myregistry.io/myorg/sender \
-  --set sender.image.tag=v1.0.0 \
-  --set receiver.image.repository=myregistry.io/myorg/receiver \
-  --set receiver.image.tag=v1.0.0
-```
-
-### Deploy Tenant 2
-
-```bash
-# Create namespace
-kubectl create namespace tenant2-demo
-
-# Install with Helm (using default images)
-helm install demo-app-tenant2 ./helm/demo-app \
-  --namespace tenant2-demo \
-  --values ./helm/demo-app/values-tenant2.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector.otel-collector.svc.cluster.local:4317
-
-# Or with custom images (same options as tenant 1)
-helm install demo-app-tenant2 ./helm/demo-app \
-  --namespace tenant2-demo \
-  --values ./helm/demo-app/values-tenant2.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector.otel-collector.svc.cluster.local:4317 \
-  --set global.imageRegistry=docker.io/myorg \
-  --set sender.image.repository=sender \
-  --set receiver.image.repository=receiver
-```
-
-### Using Makefile for Deployment
-
-The Makefile supports image overrides:
-
-```bash
-# Deploy with custom registry
-make deploy-tenant1 IMAGE_REGISTRY=docker.io/myorg TAG=v1.0.0
-
-# Deploy with custom registry and tag
-make deploy-tenant2 IMAGE_REGISTRY=ghcr.io/myorg TAG=latest
-```
 
 ## Verify Deployment
 

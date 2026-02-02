@@ -49,10 +49,35 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Process environment variables from a list, preserving order
+Supports both value and valueFrom objects
+Optionally exclude specific names by providing an "exclude" list parameter
+Usage: {{- include "demo-app.processEnvsList" (dict "envs" .Values.receiver.env "ctx" .) }}
+Usage (with exclusions): {{- include "demo-app.processEnvsList" (dict "envs" .Values.loadgen.env "exclude" (list "TARGET_HOST") "ctx" .) }}
+*/}}
+{{- define "demo-app.processEnvsList" -}}
+{{- $exclude := default list .exclude }}
+{{- if .envs }}
+{{- range .envs }}
+{{- if not (has .name $exclude) }}
+- name: {{ .name }}
+  {{- if .valueFrom }}
+  valueFrom:
+    {{- toYaml .valueFrom | nindent 4 }}
+  {{- else if .value }}
+  value: {{ .value | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Process environment variables from a map, supporting both string values and valueFrom objects
 Optionally exclude specific keys by providing an "exclude" list parameter
+DEPRECATED: Use processEnvsList for guaranteed order preservation
 Usage (all envs): {{- include "demo-app.processEnvs" (dict "envs" .Values.global.envs "ctx" .) }}
-Usage (with exclusions): {{- include "demo-app.processEnvs" (dict "envs" .Values.loadgen.env "exclude" (list "TARGET_HOST" "OTEL_SERVICE_NAME") "ctx" .) }}
+Usage (with exclusions): {{- include "demo-app.processEnvs" (dict "envs" .Values.loadgen.env "exclude" (list "TARGET_HOST") "ctx" .) }}
 */}}
 {{- define "demo-app.processEnvs" -}}
 {{- $exclude := default list .exclude }}

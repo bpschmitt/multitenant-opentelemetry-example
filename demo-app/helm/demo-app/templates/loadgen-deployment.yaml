@@ -38,28 +38,22 @@ spec:
         {{- else }}
         image: "{{ $repo }}:{{ $tag }}"
         {{- end }}
-        imagePullPolicy: {{ .Values.loadgen.image.pullPolicy | default .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
-        ports:
-        - name: web
-          containerPort: 8089
-          protocol: TCP
+        imagePullPolicy: {{ .Values.loadgen.image.pullPolicy | default .Values.global.imagePullPolicy }}
+        command: ["/app/run-headless.sh"]
         env:
         {{- if .Values.global.envs }}
-        {{- include "demo-app.processEnvs" (dict "envs" .Values.global.envs "ctx" .) | nindent 8 }}
+        {{- include "demo-app.processEnvsList" (dict "envs" .Values.global.envs "ctx" .) | nindent 8 }}
         {{- end }}
         {{- if .Values.loadgen.env }}
-        {{- include "demo-app.processEnvs" (dict "envs" .Values.loadgen.env "exclude" (list "TARGET_HOST" "OTEL_SERVICE_NAME") "ctx" .) | nindent 8 }}
+        {{- include "demo-app.processEnvsList" (dict "envs" .Values.loadgen.env "exclude" (list "TARGET_HOST") "ctx" .) | nindent 8 }}
         {{- end }}
-        {{- if .Values.loadgen.env.TARGET_HOST }}
+        {{- if .Values.loadgen.env }}
+        {{- range .Values.loadgen.env }}
+        {{- if eq .name "TARGET_HOST" }}
         - name: TARGET_HOST
-          value: {{ .Values.loadgen.env.TARGET_HOST | quote }}
+          value: {{ .value | quote }}
         {{- end }}
-        {{- if .Values.loadgen.env.OTEL_SERVICE_NAME }}
-        - name: OTEL_SERVICE_NAME
-          value: "{{ .Values.loadgen.env.OTEL_SERVICE_NAME }}-{{ .Values.global.tenantId }}"
-        {{- else }}
-        - name: OTEL_SERVICE_NAME
-          value: "loadgen-service-{{ .Values.global.tenantId }}"
+        {{- end }}
         {{- end }}
         - name: TENANT_ID
           value: {{ .Values.global.tenantId | quote }}
