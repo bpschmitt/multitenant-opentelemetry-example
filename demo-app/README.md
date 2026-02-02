@@ -51,7 +51,6 @@ helm install demo-app-tenant1 ./helm/demo-app \
 helm install demo-app-tenant1 ./helm/demo-app \
   --namespace tenant1-demo \
   --values ./helm/demo-app/values-tenant1.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317 \
   --set sender.image.repository=myregistry.io/myorg/sender \
   --set sender.image.tag=v1.0.0 \
   --set receiver.image.repository=myregistry.io/myorg/receiver \
@@ -67,14 +66,12 @@ kubectl create namespace tenant2-demo
 # Install with Helm (using default images)
 helm install demo-app-tenant2 ./helm/demo-app \
   --namespace tenant2-demo \
-  --values ./helm/demo-app/values-tenant2.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317
+  --values ./helm/demo-app/values-tenant2.yaml
 
 # Or with custom images (same options as tenant 1)
 helm install demo-app-tenant2 ./helm/demo-app \
   --namespace tenant2-demo \
   --values ./helm/demo-app/values-tenant2.yaml \
-  --set global.otlpEndpoint=http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317 \
   --set global.imageRegistry=docker.io/myorg \
   --set sender.image.repository=sender \
   --set receiver.image.repository=receiver
