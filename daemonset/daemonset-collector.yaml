@@ -45,12 +45,15 @@ spec:
     - name: varlogpods
       hostPath:
         path: /var/log/pods
-  config:
 
+  config:
     exporters:
+
       debug: {}
+
       otlphttp/gateway:
         endpoint: http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4318
+
       otlphttp/newrelic:
         endpoint: https://otlp.nr-data.net
         headers:
@@ -63,6 +66,11 @@ spec:
     processors:
       batch: {}
       cumulativetodelta: {}
+
+      resourcedetection/env:
+        detectors: [env]
+        timeout: 2s
+        override: false
       
       resource/cluster_name:
         attributes:
@@ -70,11 +78,11 @@ spec:
           action: upsert
           value: ${env:K8S_CLUSTER_NAME}
 
-      resource/entity_type:
-        attributes:
-        - key: newrelic.entity.type
-          action: upsert
-          value: "k8s"
+      # resource/entity_type:
+      #   attributes:
+      #   - key: newrelic.entity.type
+      #     action: upsert
+      #     value: "k8s"
         
       k8sattributes:
         extract:
@@ -131,6 +139,7 @@ spec:
         retry_on_failure:
           enabled: true
         start_at: end
+
       hostmetrics:
         collection_interval: 30s
         root_path: /hostfs
@@ -185,6 +194,7 @@ spec:
               system.memory.utilization:
                 enabled: true
           network:
+
       kubeletstats:
         auth_type: serviceAccount
         collection_interval: 30s
@@ -201,6 +211,7 @@ spec:
             enabled: true
           k8s.pod.memory_request_utilization:
             enabled: true
+
       otlp:
         protocols:
           grpc:
@@ -219,6 +230,7 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
+          - resourcedetection/env
           - resource/cluster_name
           - batch
           exporters:
@@ -229,6 +241,7 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
+          - resourcedetection/env
           - resource/cluster_name
           - batch
           exporters:
@@ -240,8 +253,9 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
+          - resourcedetection/env
           - resource/cluster_name
-          - resource/entity_type
+          # - resource/entity_type
           - batch
           exporters:
           - otlphttp/gateway
@@ -251,6 +265,7 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
+          - resourcedetection/env
           - resource/cluster_name
           - batch
           exporters:

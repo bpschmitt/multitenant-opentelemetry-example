@@ -10,7 +10,7 @@ spec:
   securityContext:
     runAsUser: 0
     readOnlyRootFilesystem: true
-    allowPrivilegeEscalation: true
+    allowPrivilegeEscalation: false
   env:
     - name: MY_POD_IP
       valueFrom:
@@ -41,9 +41,10 @@ spec:
           name: newrelic-license-key-tenant2
     - name: K8S_CLUSTER_NAME
       value: "openshift"
-  config:
 
+  config:
     connectors:
+
       routing/logs:
         default_pipelines:
         - logs
@@ -56,6 +57,7 @@ spec:
           context: log
           pipelines:
           - logs/tenant2
+
       routing/metrics:
         default_pipelines:
         - metrics
@@ -68,6 +70,7 @@ spec:
           context: metric
           pipelines:
           - metrics/tenant2
+
       routing/traces:
         table:
         - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
@@ -80,17 +83,22 @@ spec:
           - traces/tenant2
 
     exporters:
+
       debug: {}
+
       debug/detailed:
         verbosity: detailed
+
       otlphttp/newrelic:
         endpoint: https://otlp.nr-data.net
         headers:
           api-key: ${NEW_RELIC_LICENSE_KEY}
+
       otlphttp/tenant1:
         endpoint: https://otlp.nr-data.net
         headers:
           api-key: ${NEW_RELIC_LICENSE_KEY_TENANT1}
+
       otlphttp/tenant2:
         endpoint: https://otlp.nr-data.net
         headers:
@@ -102,11 +110,14 @@ spec:
 
     processors:
       batch: {}
+
       cumulativetodelta: {}
+
       memory_limiter:
         check_interval: 5s
         limit_percentage: 80
         spike_limit_percentage: 25
+
       transform/nr:
         metric_statements:
         - context: datapoint
@@ -115,11 +126,14 @@ spec:
             ".*(kubeletstatsreceiver|k8sclusterreceiver|k8seventsreceiver).*")
 
     receivers:
+
       k8s_cluster:
         collection_interval: 30s
         node_conditions_to_report: [Ready, MemoryPressure]
         allocatable_types_to_report: [cpu, memory, ephemeral-storage]
+
       k8s_events: {}
+
       otlp:
         protocols:
           grpc:
