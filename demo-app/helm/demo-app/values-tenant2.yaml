@@ -65,7 +65,7 @@ receiver:
     pullPolicy: "Always"  # Override pull policy
   env:
     - name: OTEL_SERVICE_NAME
-      value: "receiver-service-tenant1"
+      value: "receiver-service-tenant2"
     - name: OTEL_SERVICE_INSTANCE_ID
       value: "$(K8S_POD_NAME)"
     - name: OTEL_RESOURCE_ATTRIBUTES
@@ -86,7 +86,7 @@ receiver:
 
 loadgen:
   enabled: true  # Disabled by default - enable when needed
-  name: loadgen
+  name: loadgen-service-tenant2
   image:
     repository: "loadgen"
   #   tag: "latest"
@@ -105,6 +105,8 @@ loadgen:
   #   spawnRate: 2  # Users to spawn per second
   #   runTime: "5m"  # Duration (e.g., "5m", "1h", "30s")
   env:
+    - name: OTEL_SERVICE_NAME
+      value: "loadgen-service-tenant2"
     - name: TARGET_HOST
       value: "http://sender-service-tenant2.tenant2-demo.svc.cluster.local:8000"  # Sends load to sender service only
   #   USERS: "10"
