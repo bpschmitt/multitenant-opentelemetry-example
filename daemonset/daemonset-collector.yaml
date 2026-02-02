@@ -64,20 +64,18 @@ spec:
       batch: {}
       cumulativetodelta: {}
       
-      resource/newrelic:
+      resource/cluster_name:
+        attributes:
+        - key: k8s.cluster.name
+          action: upsert
+          value: ${env:K8S_CLUSTER_NAME}
+
+      resource/entity_type:
         attributes:
         - key: newrelic.entity.type
           action: upsert
           value: "k8s"
-        - key: "newrelic.chart.version"
-          action: upsert
-          value: 0.0.0
-        - key: newrelic.entity.type
-          action: upsert
-          value: "k8s"
-        - key: k8s.cluster.name
-          action: upsert
-          value: ${env:K8S_CLUSTER_NAME}
+        
       k8sattributes:
         extract:
           metadata:
@@ -221,19 +219,29 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
-          - resource/newrelic
+          - resource/cluster_name
           - batch
           exporters:
           - otlphttp/gateway
-        metrics:
+        metrics/otlp:
           receivers:
           - otlp
+          processors:
+          - memory_limiter
+          - k8sattributes
+          - resource/cluster_name
+          - batch
+          exporters:
+          - otlphttp/gateway
+        metrics/infra:
+          receivers:
           - hostmetrics
           - kubeletstats
           processors:
           - memory_limiter
           - k8sattributes
-          - resource/newrelic
+          - resource/cluster_name
+          - resource/entity_type
           - batch
           exporters:
           - otlphttp/gateway
@@ -243,6 +251,7 @@ spec:
           processors:
           - memory_limiter
           - k8sattributes
+          - resource/cluster_name
           - batch
           exporters:
           - otlphttp/gateway
