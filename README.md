@@ -4,6 +4,7 @@ A complete example demonstrating multi-tenant OpenTelemetry telemetry collection
 
 This repository provides:
 - **OpenTelemetry Collector configurations** for both deployment and daemonset modes
+- **OpenTelemetry Operator support** for CRD-based collector management and auto-instrumentation
 - **Multi-tenant demo application** with sender, receiver, and load generator services
 - **Helm charts** for easy deployment and configuration
 - **Complete instrumentation examples** showing traces, metrics, and logs
@@ -13,9 +14,11 @@ This repository provides:
 ```
 multitenant-opentelemetry-example/
 ├── deployment/              # OpenTelemetry Collector deployment mode config
-│   └── values.yaml          # Helm values for deployment mode
+│   └── deployment-values.yaml  # Helm values for deployment mode
 ├── daemonset/               # OpenTelemetry Collector daemonset mode config
-│   └── values.yaml          # Helm values for daemonset mode
+│   └── daemonset-values.yaml  # Helm values for daemonset mode
+├── operator/                # OpenTelemetry Operator configuration
+│   └── values.yaml          # Helm values for OpenTelemetry Operator
 ├── demo-app/                # Multi-tenant demo application
 │   ├── sender/             # Sender service (FastAPI)
 │   ├── receiver/           # Receiver service (FastAPI)
@@ -32,7 +35,41 @@ multitenant-opentelemetry-example/
 
 ## 🚀 Quick Start
 
-### 1. Install OpenTelemetry Collector
+### 1. Install OpenTelemetry Operator (Optional but Recommended)
+
+The OpenTelemetry Operator provides CRD-based management of OpenTelemetry Collectors and enables automatic instrumentation injection. This is the recommended approach for production deployments.
+
+**Install the operator:**
+
+```bash
+# Add the OpenTelemetry Helm repository (if not already added)
+helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+helm repo update
+
+# Install the operator
+helm install opentelemetry-operator open-telemetry/opentelemetry-operator \
+  --namespace observability \
+  --create-namespace \
+  --values operator/values.yaml
+```
+
+**For OpenShift clusters**, you may need to configure Security Context Constraints (SCC) first:
+```bash
+oc adm policy add-scc-to-user hostmount-anyuid -z otel-collector -n observability
+oc adm policy add-scc-to-user privileged -z otel-collector -n observability
+```
+
+**Verify installation:**
+```bash
+kubectl get pods -n observability
+kubectl get crd | grep opentelemetry
+```
+
+Once the operator is installed, you can use `OpenTelemetryCollector` CRDs instead of Helm charts (see "Using the Operator" section below).
+
+**Note**: You can use either the operator (CRD-based) or Helm charts directly. The operator provides additional features like automatic instrumentation injection.
+
+### 2. Install OpenTelemetry Collector
 
 Choose either deployment or daemonset mode based on your needs:
 
@@ -54,7 +91,7 @@ kubectl create secret generic newrelic-license-key-tenant2 \
 helm install opentelemetry-collector open-telemetry/opentelemetry-collector \
   --namespace otel-collector \
   --create-namespace \
-  --values deployment/values.yaml
+  --values deployment/deployment-values.yaml
 ```
 
 **Daemonset Mode** (recommended for node-level metrics and logs, forwards to deployment gateway):
@@ -64,7 +101,7 @@ helm install opentelemetry-collector open-telemetry/opentelemetry-collector \
 helm install opentelemetry-collector-daemonset open-telemetry/opentelemetry-collector \
   --namespace otel-collector \
   --create-namespace \
-  --values daemonset/values.yaml
+  --values daemonset/daemonset-values.yaml
 ```
 
 **Note**: If you install both deployment and daemonset, use different Helm release names (e.g., `opentelemetry-collector` for deployment and `opentelemetry-collector-daemonset` for daemonset).
@@ -73,7 +110,7 @@ helm install opentelemetry-collector-daemonset open-telemetry/opentelemetry-coll
 
 📖 **Full installation instructions**: See [INSTALL.md](INSTALL.md)
 
-### 2. Build and Deploy Demo Application
+### 3. Build and Deploy Demo Application
 
 ```bash
 cd demo-app
@@ -98,6 +135,90 @@ helm upgrade --install demo-app-tenant2 ./helm/demo-app \
 **Note**: The demo app is configured to use node-local endpoints by default (for daemonset mode). If using deployment mode only, update the values files to set `useNodeLocalEndpoint: false` and configure `otlpEndpoint`.
 
 📖 **Full demo app documentation**: See [demo-app/README.md](demo-app/README.md)
+
+## 🔧 Using the OpenTelemetry Operator
+
+If you've installed the OpenTelemetry Operator, you can manage collectors using Custom Resource Definitions (CRDs) instead of Helm charts. This provides several benefits:
+
+- **CRD-based management**: Declarative collector configuration
+- **Automatic instrumentation**: Inject OpenTelemetry instrumentation into pods automatically
+- **Simplified deployment**: No need to manage Helm releases for collectors
+- **Better integration**: Works seamlessly with Kubernetes-native tooling
+
+### Deploying Collectors with the Operator
+
+Instead of using Helm charts, you can create `OpenTelemetryCollector` custom resources. The operator will automatically create and manage the collector deployments.
+
+**Example: Deployment Mode Collector**
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-collector
+  namespace: otel-collector
+spec:
+  mode: deployment
+  config: |
+    # Your collector configuration here
+    # (same as in deployment/deployment-values.yaml config section)
+```
+
+**Example: Daemonset Mode Collector**
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-collector-daemonset
+  namespace: otel-collector
+spec:
+  mode: daemonset
+  config: |
+    # Your collector configuration here
+    # (same as in daemonset/daemonset-values.yaml config section)
+```
+
+### Automatic Instrumentation
+
+The operator can automatically inject OpenTelemetry instrumentation into your application pods using the `Instrumentation` CRD:
+
+```yaml
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+  namespace: tenant1
+spec:
+  exporter:
+    endpoint: http://otel-collector.otel-collector.svc.cluster.local:4317
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+```
+
+Then annotate your pods/deployments to enable instrumentation:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "true"
+        instrumentation.opentelemetry.io/inject-java: "true"
+        # etc.
+```
+
+**Note**: The demo application in this repository uses manual instrumentation, but you can adapt it to use operator-based auto-instrumentation if desired.
+
+📖 **More information**: See [OpenTelemetry Operator Documentation](https://github.com/open-telemetry/opentelemetry-operator)
 
 ## 🏗️ Architecture
 
@@ -144,6 +265,14 @@ New Relic (per-tenant accounts)
 - **New Relic Integration**: Configured to export to New Relic OTLP endpoint with per-tenant license keys
 - **Resource Attributes**: Automatically enriches telemetry with Kubernetes metadata
 - **Hybrid Architecture**: Daemonset collectors can forward to deployment gateway for centralized routing
+- **Operator Support**: CRD-based management via OpenTelemetry Operator (optional)
+
+### OpenTelemetry Operator (Optional)
+
+- **CRD-based Management**: Declarative collector configuration using `OpenTelemetryCollector` CRDs
+- **Automatic Instrumentation**: Inject OpenTelemetry SDKs into pods using `Instrumentation` CRDs
+- **Webhook-based Injection**: Automatic sidecar and instrumentation injection via admission webhooks
+- **Multi-language Support**: Auto-instrumentation for Java, Python, Node.js, .NET, Go, and Apache HTTPd
 
 ### Demo Application
 
@@ -176,9 +305,18 @@ All telemetry includes:
 
 ## 🔧 Configuration
 
+### Installation Options
+
+You can install the OpenTelemetry Collector using either:
+
+1. **Helm Charts** (direct installation) - See sections below
+2. **OpenTelemetry Operator** (CRD-based) - See "Using the OpenTelemetry Operator" section above
+
+Both methods are supported. The operator provides additional features like automatic instrumentation injection, while Helm charts offer more direct control over the deployment.
+
 ### OpenTelemetry Collector
 
-Configuration files are in `deployment/values.yaml` and `daemonset/values.yaml`. Key settings:
+Configuration files are in `deployment/deployment-values.yaml` and `daemonset/daemonset-values.yaml`. Key settings:
 
 - **OTLP Receivers**: Accept telemetry from applications
 - **New Relic Exporters**: Multiple exporters configured for per-tenant routing
@@ -311,10 +449,41 @@ curl -X POST http://localhost:8000/send \
    kubectl get svc -n tenant1
    ```
 
+### Operator Issues
+
+1. **Operator not injecting instrumentation:**
+   ```bash
+   # Check operator pods are running
+   kubectl get pods -n observability
+   
+   # Check operator logs
+   kubectl logs -n observability -l app.kubernetes.io/name=opentelemetry-operator
+   
+   # Verify CRDs are installed
+   kubectl get crd | grep opentelemetry
+   ```
+
+2. **Webhook admission errors:**
+   ```bash
+   # Check webhook configuration
+   kubectl get mutatingwebhookconfigurations
+   kubectl get validatingwebhookconfigurations
+   
+   # Check webhook service
+   kubectl get svc -n observability
+   ```
+
+3. **OpenShift SCC issues:**
+   ```bash
+   # Apply SCC policies (see operator installation section)
+   oc adm policy add-scc-to-user hostmount-anyuid -z otel-collector -n observability
+   oc adm policy add-scc-to-user privileged -z otel-collector -n observability
+   ```
+
 ## 🛠️ Prerequisites
 
 - Kubernetes cluster (1.20+)
-- Helm 3.x
+- Helm 3.x (for Helm-based installation)
 - kubectl configured
 - Docker (for building images)
 - New Relic account with license keys:
@@ -322,6 +491,7 @@ curl -X POST http://localhost:8000/send \
   - Tenant 1 license key (optional, for tenant1 namespace)
   - Tenant 2 license key (optional, for tenant2 namespace)
 - Docker registry access (for pushing demo app images)
+- **OpenShift users**: May need to configure Security Context Constraints (SCC) for the operator
 
 ## 📝 License
 
@@ -335,5 +505,7 @@ This is a demonstration repository. Feel free to use it as a reference for your 
 
 - [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
 - [OpenTelemetry Collector Helm Chart](https://github.com/open-telemetry/opentelemetry-helm-charts)
+- [OpenTelemetry Operator](https://github.com/open-telemetry/opentelemetry-operator)
+- [OpenTelemetry Operator Helm Chart](https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-operator)
 - [New Relic OTLP Documentation](https://docs.newrelic.com/docs/more-integrations/open-source-telemetry-integrations/opentelemetry/opentelemetry-setup/)
 - [OpenTelemetry Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/)
