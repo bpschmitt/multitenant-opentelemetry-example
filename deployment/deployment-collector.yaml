@@ -117,6 +117,8 @@ spec:
     receivers:
       k8s_cluster:
         collection_interval: 30s
+        node_conditions_to_report: [Ready, MemoryPressure]
+        allocatable_types_to_report: [cpu, memory, ephemeral-storage]
       k8s_events: {}
       otlp:
         protocols:
