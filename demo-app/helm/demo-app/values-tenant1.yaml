@@ -1,16 +1,17 @@
 # Tenant 1 specific values
 global:
   tenantId: "tenant1"
+
   # OTLP endpoint configuration
   # Set useNodeLocalEndpoint: true to use node's IP (default, for daemonset collectors)
   # Set useNodeLocalEndpoint: false to use a specific endpoint (for deployment collectors)
   useNodeLocalEndpoint: true
-  # otlpEndpoint: "http://opentelemetry-collector.otel-collector.svc.cluster.local:4317"
   otlpPort: "4317"  # Port for node-local endpoint
+  # otlpEndpoint: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+  
   # Uncomment and set to use a global registry for all images
   imageRegistry: "docker.io/bpschmitt"
   # imageRegistry: "ghcr.io/myorg"
-  # imageRegistry: "myregistry.io"
   # Global environment variables (applied to all services)
   # Supports both value and valueFrom objects (for downward API, secrets, configmaps)
   envs:
@@ -74,7 +75,7 @@ receiver:
     - name: LATENCY_MS
       value: "0"
     - name: PROCESSING_TIME_MS
-      value: "100"
+      value: "300"
   resources:
     limits:
       cpu: 200m
