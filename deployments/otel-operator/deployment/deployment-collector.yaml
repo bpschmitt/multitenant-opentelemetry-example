@@ -1,0 +1,256 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: opentelemetry-collector-deployment
+  namespace: observability
+spec:
+  mode: deployment
+  serviceAccount: otel-collector
+  # Add container-level security context
+  securityContext:
+    runAsUser: 0
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+  env:
+    - name: MY_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: K8S_NODE_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.hostIP
+    - name: NEW_RELIC_LICENSE_KEY
+      valueFrom:
+        secretKeyRef:
+          key: license-key
+          name: newrelic-license-key
+    - name: NEW_RELIC_LICENSE_KEY_TENANT1
+      valueFrom:
+        secretKeyRef:
+          key: license-key
+          name: newrelic-license-key-tenant1
+    - name: NEW_RELIC_LICENSE_KEY_TENANT2
+      valueFrom:
+        secretKeyRef:
+          key: license-key
+          name: newrelic-license-key-tenant2
+    - name: K8S_CLUSTER_NAME
+      value: "openshift"
+
+  config:
+    connectors:
+
+      routing/logs:
+        default_pipelines:
+        - logs
+        table:
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
+          context: log
+          pipelines:
+          - logs/tenant1
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
+          context: log
+          pipelines:
+          - logs/tenant2
+
+      routing/metrics:
+        default_pipelines:
+        - metrics
+        table:
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
+          context: metric
+          pipelines:
+          - metrics/tenant1
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
+          context: metric
+          pipelines:
+          - metrics/tenant2
+
+      routing/traces:
+        table:
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
+          context: span
+          pipelines:
+          - traces/tenant1
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
+          context: span
+          pipelines:
+          - traces/tenant2
+
+    exporters:
+
+      debug: {}
+
+      debug/detailed:
+        verbosity: detailed
+
+      otlphttp/newrelic:
+        endpoint: https://otlp.nr-data.net
+        headers:
+          api-key: ${NEW_RELIC_LICENSE_KEY}
+
+      otlphttp/tenant1:
+        endpoint: https://otlp.nr-data.net
+        headers:
+          api-key: ${NEW_RELIC_LICENSE_KEY_TENANT1}
+
+      otlphttp/tenant2:
+        endpoint: https://otlp.nr-data.net
+        headers:
+          api-key: ${NEW_RELIC_LICENSE_KEY_TENANT2}
+
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+
+    processors:
+      batch: {}
+
+      cumulativetodelta: {}
+
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      transform/nr:
+        metric_statements:
+        - context: datapoint
+          statements:
+          - set(attributes["newrelic.entity.type"], "k8s") where IsMatch(instrumentation_scope.name,
+            ".*(kubeletstatsreceiver|k8sclusterreceiver|k8seventsreceiver).*")
+
+    receivers:
+
+      k8s_cluster:
+        collection_interval: 30s
+        node_conditions_to_report: [Ready, MemoryPressure]
+        allocatable_types_to_report: [cpu, memory, ephemeral-storage]
+
+      k8s_events: {}
+
+      otlp:
+        protocols:
+          grpc:
+            endpoint: ${env:MY_POD_IP}:4317
+          http:
+            endpoint: ${env:MY_POD_IP}:4318
+            
+    service:
+      extensions:
+      - health_check
+      pipelines:
+        logs:
+          exporters:
+          - otlphttp/newrelic
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/logs
+          - k8s_events
+        logs/in:
+          exporters:
+          - routing/logs
+          receivers:
+          - otlp
+        logs/tenant1:
+          exporters:
+          - debug
+          - otlphttp/tenant1
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/logs
+        logs/tenant2:
+          exporters:
+          - debug
+          - otlphttp/tenant2
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/logs
+        metrics:
+          exporters:
+          - otlphttp/newrelic
+          processors:
+          - memory_limiter
+          - cumulativetodelta
+          - transform/nr
+          - batch
+          receivers:
+          - routing/metrics
+        metrics/in:
+          exporters:
+          - routing/metrics
+          receivers:
+          - otlp
+          - k8s_cluster
+        metrics/tenant1:
+          exporters:
+          - otlphttp/tenant1
+          processors:
+          - memory_limiter
+          - cumulativetodelta
+          - transform/nr
+          - batch
+          receivers:
+          - routing/metrics
+        metrics/tenant2:
+          exporters:
+          - otlphttp/tenant2
+          processors:
+          - memory_limiter
+          - cumulativetodelta
+          - transform/nr
+          - batch
+          receivers:
+          - routing/metrics
+        traces:
+          exporters:
+          - otlphttp/newrelic
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/traces
+        traces/in:
+          exporters:
+          - routing/traces
+          receivers:
+          - otlp
+        traces/tenant1:
+          exporters:
+          - otlphttp/tenant1
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/traces
+        traces/tenant2:
+          exporters:
+          - otlphttp/tenant2
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/traces
+      telemetry:
+        metrics:
+          level: "basic"
+          readers:
+            - periodic:
+                exporter:
+                  otlp:
+                    protocol: http/protobuf
+                    endpoint: "https://otlp.nr-data.net"
+                    headers:
+                      - name: api-key
+                        value: "${NEW_RELIC_LICENSE_KEY}"
