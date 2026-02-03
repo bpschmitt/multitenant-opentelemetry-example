@@ -1,0 +1,85 @@
+{{- if .Values.sender.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.sender.name }}
+  labels:
+    app: {{ .Values.sender.name }}
+    tenant: {{ .Values.global.tenantId }}
+    component: sender
+spec:
+  replicas: {{ .Values.sender.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.sender.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.sender.name }}
+        tenant: {{ .Values.global.tenantId }}
+        component: sender
+    spec:
+      {{- if or .Values.global.imagePullSecrets .Values.sender.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+        {{- range .Values.sender.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+      - name: sender
+        {{- $registry := .Values.global.imageRegistry }}
+        {{- $repo := .Values.sender.image.repository }}
+        {{- $tag := .Values.sender.image.tag }}
+        {{- if $registry }}
+        image: "{{ $registry }}/{{ $repo }}:{{ $tag }}"
+        {{- else }}
+        image: "{{ $repo }}:{{ $tag }}"
+        {{- end }}
+        imagePullPolicy: {{ .Values.sender.image.pullPolicy | default .Values.global.imagePullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        {{- if .Values.global.envs }}
+        {{- include "demo-app.processEnvsList" (dict "envs" .Values.global.envs "ctx" .) | nindent 8 }}
+        {{- end }}
+        {{- if .Values.sender.env }}
+        {{- include "demo-app.processEnvsList" (dict "envs" .Values.sender.env "exclude" (list "RECEIVER_SERVICE_URL") "ctx" .) | nindent 8 }}
+        {{- end }}
+        - name: TENANT_ID
+          value: {{ .Values.global.tenantId | quote }}
+        - name: RECEIVER_SERVICE_URL
+          value: "http://{{ .Values.receiver.name }}:{{ .Values.receiver.service.port }}"
+        {{- if .Values.global.useNodeLocalEndpoint }}
+        - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OTLP_PORT
+          value: {{ .Values.global.otlpPort | quote }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://$(NODE_IP):$(OTLP_PORT)"
+        {{- else }}
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: {{ .Values.global.otlpEndpoint | quote }}
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          {{- toYaml .Values.sender.resources | nindent 10 }}
+{{- end }}
+

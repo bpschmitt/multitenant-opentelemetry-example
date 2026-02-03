@@ -1,0 +1,20 @@
+{{- if .Values.sender.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.sender.name }}
+  labels:
+    app: {{ .Values.sender.name }}
+    tenant: {{ .Values.global.tenantId }}
+    component: sender
+spec:
+  type: {{ .Values.sender.service.type }}
+  ports:
+    - port: {{ .Values.sender.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: {{ .Values.sender.name }}
+{{- end }}
+

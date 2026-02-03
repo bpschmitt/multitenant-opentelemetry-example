@@ -1,0 +1,492 @@
+---
+# Source: opentelemetry-collector/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opentelemetry-collector
+  namespace: otel-collector
+  labels:
+    helm.sh/chart: opentelemetry-collector-0.144.0
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: opentelemetry-collector
+    app.kubernetes.io/version: "0.144.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: opentelemetry-collector
+    app.kubernetes.io/component: standalone-collector
+---
+# Source: opentelemetry-collector/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opentelemetry-collector
+  namespace: otel-collector
+  labels:
+    helm.sh/chart: opentelemetry-collector-0.144.0
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: opentelemetry-collector
+    app.kubernetes.io/version: "0.144.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: opentelemetry-collector
+    app.kubernetes.io/component: standalone-collector
+data:
+  relay: |
+    connectors:
+      routing/logs:
+        default_pipelines:
+        - logs
+        table:
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant1"
+          context: log
+          pipelines:
+          - logs/tenant1
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant2"
+          context: log
+          pipelines:
+          - logs/tenant2
+      routing/metrics:
+        default_pipelines:
+        - metrics
+        table:
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant1"
+          context: metric
+          pipelines:
+          - metrics/tenant1
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant2"
+          context: metric
+          pipelines:
+          - metrics/tenant2
+      routing/traces:
+        table:
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant1"
+          context: span
+          pipelines:
+          - traces/tenant1
+        - condition: resource.attributes["k8s.namespace.name"] == "tenant2"
+          context: span
+          pipelines:
+          - traces/tenant2
+    exporters:
+      debug: {}
+      otlphttp/newrelic:
+        endpoint: https://otlp.nr-data.net
+        headers:
+          api-key: ${NEW_RELIC_LICENSE_KEY}
+      otlphttp/tenant1:
+        endpoint: https://otlp.nr-data.net
+        headers:
+          api-key: ${NEW_RELIC_LICENSE_KEY_TENANT1}
+      otlphttp/tenant2:
+        endpoint: https://otlp.nr-data.net
+        headers:
+          api-key: ${NEW_RELIC_LICENSE_KEY_TENANT2}
+    extensions:
+      health_check:
+        endpoint: ${env:MY_POD_IP}:13133
+    processors:
+      batch: {}
+      cumulativetodelta: {}
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+      transform/nr:
+        metric_statements:
+        - context: datapoint
+          statements:
+          - set(attributes["newrelic.entity.type"], "k8s") where IsMatch(instrumentation_scope.name,
+            ".*(kubeletstatsreceiver|k8sclusterreceiver).*")
+    receivers:
+      k8s_cluster:
+        collection_interval: 30s
+      k8sobjects:
+        objects:
+        - exclude_watch_type:
+          - DELETED
+          group: events.k8s.io
+          mode: watch
+          name: events
+      otlp:
+        protocols:
+          grpc:
+            endpoint: ${env:MY_POD_IP}:4317
+          http:
+            endpoint: ${env:MY_POD_IP}:4318
+      prometheus:
+        config:
+          scrape_configs:
+          - job_name: opentelemetry-collector
+            scrape_interval: 10s
+            static_configs:
+            - targets:
+              - ${env:MY_POD_IP}:8888
+    service:
+      extensions:
+      - health_check
+      pipelines:
+        logs:
+          exporters:
+          - debug
+          - otlphttp/newrelic
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/logs
+          - k8sobjects
+        logs/in:
+          exporters:
+          - routing/logs
+          receivers:
+          - otlp
+        logs/tenant1:
+          exporters:
+          - debug
+          - otlphttp/tenant1
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/logs
+        logs/tenant2:
+          exporters:
+          - debug
+          - otlphttp/tenant2
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/logs
+        metrics:
+          exporters:
+          - debug
+          - otlphttp/newrelic
+          processors:
+          - memory_limiter
+          - cumulativetodelta
+          - transform/nr
+          - batch
+          receivers:
+          - routing/metrics
+        metrics/in:
+          exporters:
+          - routing/metrics
+          receivers:
+          - otlp
+          - k8s_cluster
+        metrics/tenant1:
+          exporters:
+          - otlphttp/tenant1
+          processors:
+          - memory_limiter
+          - cumulativetodelta
+          - transform/nr
+          - batch
+          receivers:
+          - routing/metrics
+        metrics/tenant2:
+          exporters:
+          - otlphttp/tenant2
+          processors:
+          - memory_limiter
+          - cumulativetodelta
+          - transform/nr
+          - batch
+          receivers:
+          - routing/metrics
+        traces:
+          exporters:
+          - otlphttp/newrelic
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/traces
+        traces/in:
+          exporters:
+          - routing/traces
+          receivers:
+          - otlp
+        traces/tenant1:
+          exporters:
+          - otlphttp/tenant1
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/traces
+        traces/tenant2:
+          exporters:
+          - otlphttp/tenant2
+          processors:
+          - memory_limiter
+          - batch
+          receivers:
+          - routing/traces
+      telemetry:
+        metrics:
+          readers:
+          - pull:
+              exporter:
+                prometheus:
+                  host: ${env:MY_POD_IP}
+                  port: 8888
+---
+# Source: opentelemetry-collector/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opentelemetry-collector
+  labels:
+    helm.sh/chart: opentelemetry-collector-0.144.0
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: opentelemetry-collector
+    app.kubernetes.io/version: "0.144.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: opentelemetry-collector
+    app.kubernetes.io/component: standalone-collector
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - pods
+    - namespaces
+    verbs:
+    - get
+    - watch
+    - list
+  - apiGroups:
+    - apps
+    resources:
+    - replicasets
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - extensions
+    resources:
+    - replicasets
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - events.k8s.io
+    resources:
+    - events
+    verbs:
+    - watch
+    - list
+  - apiGroups:
+    - ""
+    resources:
+    - events
+    - namespaces
+    - namespaces/status
+    - nodes
+    - nodes/spec
+    - pods
+    - pods/status
+    - replicationcontrollers
+    - replicationcontrollers/status
+    - resourcequotas
+    - services
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - apps
+    resources:
+    - daemonsets
+    - deployments
+    - replicasets
+    - statefulsets
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - extensions
+    resources:
+    - daemonsets
+    - deployments
+    - replicasets
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - batch
+    resources:
+    - jobs
+    - cronjobs
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - autoscaling
+    resources:
+    - horizontalpodautoscalers
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["watch", "list"]
+---
+# Source: opentelemetry-collector/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opentelemetry-collector
+  labels:
+    helm.sh/chart: opentelemetry-collector-0.144.0
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: opentelemetry-collector
+    app.kubernetes.io/version: "0.144.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: opentelemetry-collector
+    app.kubernetes.io/component: standalone-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opentelemetry-collector
+subjects:
+- kind: ServiceAccount
+  name: opentelemetry-collector
+  namespace: otel-collector
+---
+# Source: opentelemetry-collector/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: opentelemetry-collector
+  namespace: otel-collector
+  labels:
+    helm.sh/chart: opentelemetry-collector-0.144.0
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: opentelemetry-collector
+    app.kubernetes.io/version: "0.144.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: opentelemetry-collector
+    app.kubernetes.io/component: standalone-collector
+    component: standalone-collector
+spec:
+  type: ClusterIP
+  ports:
+    
+    - name: otlp
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: opentelemetry-collector
+    component: standalone-collector
+  internalTrafficPolicy: Cluster
+---
+# Source: opentelemetry-collector/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opentelemetry-collector
+  namespace: otel-collector
+  labels:
+    helm.sh/chart: opentelemetry-collector-0.144.0
+    app.kubernetes.io/name: opentelemetry-collector
+    app.kubernetes.io/instance: opentelemetry-collector
+    app.kubernetes.io/version: "0.144.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: opentelemetry-collector
+    app.kubernetes.io/component: standalone-collector
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opentelemetry-collector
+      app.kubernetes.io/instance: opentelemetry-collector
+      component: standalone-collector
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        checksum/config: 084d25547ea1a1dab442589994b92ee18daacd55a7cda130ed140b88d189a22f
+        
+      labels:
+        app.kubernetes.io/name: opentelemetry-collector
+        app.kubernetes.io/instance: opentelemetry-collector
+        component: standalone-collector
+        
+    spec:
+      
+      serviceAccountName: opentelemetry-collector
+      automountServiceAccountToken: true
+      securityContext:
+        {}
+      containers:
+        - name: opentelemetry-collector
+          args:
+            - --config=/conf/relay.yaml
+          securityContext:
+            {}
+          image: "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s:0.144.0"
+          imagePullPolicy: IfNotPresent
+          ports:
+            
+            - name: otlp
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: NEW_RELIC_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: license-key
+                  name: newrelic-license-key
+            - name: NEW_RELIC_LICENSE_KEY_TENANT1
+              valueFrom:
+                secretKeyRef:
+                  key: license-key
+                  name: newrelic-license-key-tenant1
+            - name: NEW_RELIC_LICENSE_KEY_TENANT2
+              valueFrom:
+                secretKeyRef:
+                  key: license-key
+                  name: newrelic-license-key-tenant2
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+          volumeMounts:
+            - mountPath: /conf
+              name: opentelemetry-collector-configmap
+      volumes:
+        - name: opentelemetry-collector-configmap
+          configMap:
+            name: opentelemetry-collector
+            items:
+              - key: relay
+                path: relay.yaml
+      hostNetwork: false
+      hostPID: false

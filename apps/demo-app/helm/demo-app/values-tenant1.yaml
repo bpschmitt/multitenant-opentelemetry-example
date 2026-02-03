@@ -1,0 +1,121 @@
+# Tenant 1 specific values
+global:
+  tenantId: "tenant1"
+
+  # OTLP endpoint configuration
+  # Set useNodeLocalEndpoint: true to use node's IP (default, for daemonset collectors)
+  # Set useNodeLocalEndpoint: false to use a specific endpoint (for deployment collectors)
+  useNodeLocalEndpoint: true
+  otlpPort: "4317"  # Port for node-local endpoint
+  # otlpEndpoint: "http://opentelemetry-collector.observability.svc.cluster.local:4317"
+  
+  # Uncomment and set to use a global registry for all images
+  imageRegistry: "docker.io/bpschmitt"
+  # imageRegistry: "ghcr.io/myorg"
+  # Global environment variables (applied to all services)
+  # Supports both value and valueFrom objects (for downward API, secrets, configmaps)
+  envs:
+    - name: K8S_POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: K8S_POD_IP
+      valueFrom:
+        fieldRef:
+          fieldPath: status.podIP
+    - name: OTEL_LOGS_EXPORTER
+      value: "none"
+
+# You can override any values here for tenant 1
+# For example, different error rates, resource limits, or images
+sender:
+  name: sender-service-tenant1
+  # Override image repository and tag if needed
+  image:
+    repository: "sender"  # Relative to global.imageRegistry if set
+  #   repository: "myorg/sender"  # Or use full path
+  #   tag: "v1.0.0"
+    pullPolicy: "Always"  # Override pull policy
+  env:
+    - name: OTEL_SERVICE_NAME
+      value: "sender-service-tenant1"
+    - name: OTEL_SERVICE_INSTANCE_ID
+      value: "$(K8S_POD_NAME)"
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME),service.instance.id=$(OTEL_SERVICE_INSTANCE_ID)"
+    - name: ERROR_RATE
+      value: "0.0"
+    - name: LATENCY_MS
+      value: "0"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi
+
+receiver:
+  name: receiver-service-tenant1
+  # Override image repository and tag if needed
+  image:
+    repository: "receiver"  # Relative to global.imageRegistry if set
+  #   repository: "myorg/receiver"  # Or use full path
+  #   tag: "v1.0.0"
+    pullPolicy: "Always"  # Override pull policy
+  env:
+    - name: OTEL_SERVICE_NAME
+      value: "receiver-service-tenant1"
+    - name: OTEL_SERVICE_INSTANCE_ID
+      value: "$(K8S_POD_NAME)"
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      value: "k8s.pod.ip=$(K8S_POD_IP),service.name=$(OTEL_SERVICE_NAME),service.instance.id=$(OTEL_SERVICE_INSTANCE_ID)"
+    - name: ERROR_RATE
+      value: "0.0"
+    - name: LATENCY_MS
+      value: "0"
+    - name: PROCESSING_TIME_MS
+      value: "300"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi
+
+loadgen:
+  enabled: true  # Disabled by default - enable when needed
+  name: loadgen-service-tenant1
+  image:
+    repository: "loadgen"
+  #   tag: "latest"
+    pullPolicy: "Always"
+  #   pullSecrets: []
+  # # Deployment mode: "deployment" for long-running with web UI, "job" for one-time runs
+  # mode: "deployment"  # or "job"
+  # # For deployment mode
+  # replicaCount: 1
+  # service:
+  #   type: ClusterIP
+  #   port: 8089
+  # # For job mode (one-time execution)
+  # job:
+  #   users: 10  # Number of concurrent users
+  #   spawnRate: 2  # Users to spawn per second
+  #   runTime: "5m"  # Duration (e.g., "5m", "1h", "30s")
+  env:
+    - name: OTEL_SERVICE_NAME
+      value: "loadgen-service-tenant1"
+    - name: TARGET_HOST
+      value: "http://sender-service-tenant1.tenant1-demo.svc.cluster.local:8000"  # Sends load to sender service only
+  #   USERS: "10"
+  #   SPAWN_RATE: "2"
+  #   RUN_TIME: "5m"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 64Mi

@@ -1,0 +1,20 @@
+{{- if and .Values.loadgen.enabled (eq .Values.loadgen.mode "deployment") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.loadgen.name }}
+  labels:
+    app: {{ .Values.loadgen.name }}
+    tenant: {{ .Values.global.tenantId }}
+    component: loadgen
+spec:
+  type: {{ .Values.loadgen.service.type }}
+  ports:
+    - port: {{ .Values.loadgen.service.port }}
+      targetPort: web
+      protocol: TCP
+      name: web
+  selector:
+    app: {{ .Values.loadgen.name }}
+{{- end }}
+
