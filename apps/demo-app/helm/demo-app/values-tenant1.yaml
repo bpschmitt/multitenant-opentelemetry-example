@@ -92,18 +92,10 @@ loadgen:
   #   tag: "latest"
     pullPolicy: "Always"
   #   pullSecrets: []
-  # # Deployment mode: "deployment" for long-running with web UI, "job" for one-time runs
-  # mode: "deployment"  # or "job"
-  # # For deployment mode
   # replicaCount: 1
   # service:
   #   type: ClusterIP
   #   port: 8089
-  # # For job mode (one-time execution)
-  # job:
-  #   users: 10  # Number of concurrent users
-  #   spawnRate: 2  # Users to spawn per second
-  #   runTime: "5m"  # Duration (e.g., "5m", "1h", "30s")
   env:
     - name: OTEL_SERVICE_NAME
       value: "loadgen-service-tenant1"

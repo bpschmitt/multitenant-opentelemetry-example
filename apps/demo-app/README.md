@@ -8,7 +8,7 @@ The demo application consists of:
 
 - **Sender Service**: Receives HTTP requests and forwards them to the receiver service
 - **Receiver Service**: Processes requests and simulates database operations
-- **Load Generator (Locust)**: Optional load generator for testing (can be deployed as deployment or job)
+- **Load Generator (Locust)**: Optional load generator for testing (deployed as Kubernetes deployment)
 
 All services are instrumented with OpenTelemetry to generate:
 - **Traces**: Distributed traces showing request flow from sender → receiver
@@ -22,7 +22,34 @@ The application will be deployed twice (once per tenant) in separate Kubernetes 
 - Kubernetes cluster with kubectl configured
 - Helm 3.x installed
 - Docker (for building images)
-- OpenTelemetry Collector deployed (see parent directory's INSTALL.md)
+- OpenTelemetry Collector deployed (see [../../README.md](../../README.md) for deployment options)
+- New Relic account with license keys
+
+### Create New Relic License Key Secrets
+
+Before deploying the demo application, ensure the OpenTelemetry Collector has access to New Relic license keys. Create the required secrets in the `observability` namespace:
+
+```bash
+# Create the observability namespace if it doesn't exist
+kubectl create namespace observability
+
+# Create default license key secret
+kubectl create secret generic newrelic-license-key \
+  --from-literal=license-key='YOUR_NEW_RELIC_LICENSE_KEY' \
+  -n observability
+
+# Create tenant 1 license key secret (optional, for tenant1-demo namespace)
+kubectl create secret generic newrelic-license-key-tenant1 \
+  --from-literal=license-key='YOUR_TENANT1_LICENSE_KEY' \
+  -n observability
+
+# Create tenant 2 license key secret (optional, for tenant2-demo namespace)
+kubectl create secret generic newrelic-license-key-tenant2 \
+  --from-literal=license-key='YOUR_TENANT2_LICENSE_KEY' \
+  -n observability
+```
+
+**Note**: Replace `YOUR_NEW_RELIC_LICENSE_KEY`, `YOUR_TENANT1_LICENSE_KEY`, and `YOUR_TENANT2_LICENSE_KEY` with your actual New Relic license keys. The tenant-specific secrets are optional but recommended for multi-tenant routing.
 
 ## Deployment
 
@@ -35,7 +62,7 @@ kubectl create namespace tenant1-demo
 # Install with Helm (using default images)
 helm install demo-app-tenant1 ./helm/demo-app \
   --namespace tenant1-demo \
-  --values ./helm/demo-app/values-tenant1.yaml
+  --values ./helm/demo-app/values-tenant1.yaml --create-namespace
 
 # Or with custom images using global registry
 helm install demo-app-tenant1 ./helm/demo-app \
@@ -66,7 +93,7 @@ kubectl create namespace tenant2-demo
 # Install with Helm (using default images)
 helm install demo-app-tenant2 ./helm/demo-app \
   --namespace tenant2-demo \
-  --values ./helm/demo-app/values-tenant2.yaml
+  --values ./helm/demo-app/values-tenant2.yaml --create-namespace
 
 # Or with custom images (same options as tenant 1)
 helm install demo-app-tenant2 ./helm/demo-app \
@@ -206,17 +233,16 @@ curl -X POST http://localhost:8000/send \
 
 ### Using the Load Generator
 
-The demo app includes a Locust-based load generator that can be deployed as a Kubernetes deployment or job.
+The demo app includes a Locust-based load generator deployed as a Kubernetes deployment.
 
-**Deploy as a Deployment (with Web UI):**
+**Deploy Load Generator (with Web UI):**
 
 ```bash
 # Enable loadgen in Helm values
 helm upgrade demo-app-tenant1 ./helm/demo-app \
   --namespace tenant1-demo \
   --values ./helm/demo-app/values-tenant1.yaml \
-  --set loadgen.enabled=true \
-  --set loadgen.mode=deployment
+  --set loadgen.enabled=true
 
 # Port-forward to access Locust web UI
 kubectl port-forward -n tenant1-demo svc/loadgen 8089:8089
@@ -224,18 +250,22 @@ kubectl port-forward -n tenant1-demo svc/loadgen 8089:8089
 # Open http://localhost:8089 in your browser to control the load test
 ```
 
-**Deploy as a Job (Headless, One-time Run):**
+**Deploy Load Generator (Headless Mode):**
+
+To run in headless mode without the web UI, configure the command:
 
 ```bash
-# Run a one-time load test
 helm upgrade demo-app-tenant1 ./helm/demo-app \
   --namespace tenant1-demo \
   --values ./helm/demo-app/values-tenant1.yaml \
   --set loadgen.enabled=true \
-  --set loadgen.mode=job \
-  --set loadgen.job.users=20 \
-  --set loadgen.job.spawnRate=5 \
-  --set loadgen.job.runTime=10m
+  --set loadgen.command='["/app/run-headless.sh"]' \
+  --set loadgen.env[0].name=USERS \
+  --set loadgen.env[0].value=20 \
+  --set loadgen.env[1].name=SPAWN_RATE \
+  --set loadgen.env[1].value=5 \
+  --set loadgen.env[2].name=RUN_TIME \
+  --set loadgen.env[2].value=10m
 ```
 
 **Configure Load Test Parameters:**

@@ -1,19 +1,23 @@
 .PHONY: help build build-sender build-receiver build-loadgen build-local build-local-sender build-local-receiver build-local-loadgen push push-sender push-receiver push-loadgen setup-buildx deploy-tenant1 deploy-tenant2 undeploy-tenant1 undeploy-tenant2 test clean
 
 # Configuration
-REGISTRY ?= demo-app
 TAG ?= latest
 PLATFORMS ?= linux/amd64,linux/arm64
 HELM_CHART = ./helm/demo-app
 NAMESPACE_TENANT1 = tenant1-demo
 NAMESPACE_TENANT2 = tenant2-demo
-OTLP_ENDPOINT = http://opentelemetry-collector.otel-collector.svc.cluster.local:4317
+# OTLP endpoint for deployment mode collectors (only used if useNodeLocalEndpoint=false)
+# Default is to use node-local endpoints (for daemonset collectors)
+OTLP_ENDPOINT = http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4317
 BUILDX_BUILDER = multiarch-builder
 # Set PUSH=false to build without pushing (images will be in buildx cache only)
 PUSH ?= true
-# Image registry for Helm deployments (if set, uses global.imageRegistry in Helm)
-# Example: IMAGE_REGISTRY=docker.io/myorg or IMAGE_REGISTRY=ghcr.io/myorg
-IMAGE_REGISTRY ?=
+# Image registry for both building and deploying (used consistently across all operations)
+# Examples: IMAGE_REGISTRY=docker.io/myorg or IMAGE_REGISTRY=ghcr.io/myorg
+# This will build images as $(IMAGE_REGISTRY)/sender:$(TAG) and deploy using the same registry
+IMAGE_REGISTRY ?= docker.io/bpschmitt
+# Set USE_DEPLOYMENT_ENDPOINT=true to use deployment collector endpoint instead of node-local
+USE_DEPLOYMENT_ENDPOINT ?= false
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -37,14 +41,14 @@ build-sender: setup-buildx ## Build sender service Docker image (multi-platform:
 		echo "Building and pushing sender service..."; \
 		docker buildx build \
 			--platform $(PLATFORMS) \
-			-t $(REGISTRY)/sender:$(TAG) \
+			-t $(IMAGE_REGISTRY)/sender:$(TAG) \
 			--push \
 			./sender; \
 	else \
 		echo "Building sender service (to cache only, not pushing - set PUSH=true to push)..."; \
 		docker buildx build \
 			--platform $(PLATFORMS) \
-			-t $(REGISTRY)/sender:$(TAG) \
+			-t $(IMAGE_REGISTRY)/sender:$(TAG) \
 			./sender; \
 	fi
 
@@ -54,14 +58,14 @@ build-receiver: setup-buildx ## Build receiver service Docker image (multi-platf
 		echo "Building and pushing receiver service..."; \
 		docker buildx build \
 			--platform $(PLATFORMS) \
-			-t $(REGISTRY)/receiver:$(TAG) \
+			-t $(IMAGE_REGISTRY)/receiver:$(TAG) \
 			--push \
 			./receiver; \
 	else \
 		echo "Building receiver service (to cache only, not pushing - set PUSH=true to push)..."; \
 		docker buildx build \
 			--platform $(PLATFORMS) \
-			-t $(REGISTRY)/receiver:$(TAG) \
+			-t $(IMAGE_REGISTRY)/receiver:$(TAG) \
 			./receiver; \
 	fi
 
@@ -71,14 +75,14 @@ build-loadgen: setup-buildx ## Build loadgen service Docker image (multi-platfor
 		echo "Building and pushing loadgen service..."; \
 		docker buildx build \
 			--platform $(PLATFORMS) \
-			-t $(REGISTRY)/loadgen:$(TAG) \
+			-t $(IMAGE_REGISTRY)/loadgen:$(TAG) \
 			--push \
 			./loadgen; \
 	else \
 		echo "Building loadgen service (to cache only, not pushing - set PUSH=true to push)..."; \
 		docker buildx build \
 			--platform $(PLATFORMS) \
-			-t $(REGISTRY)/loadgen:$(TAG) \
+			-t $(IMAGE_REGISTRY)/loadgen:$(TAG) \
 			./loadgen; \
 	fi
 
@@ -86,15 +90,15 @@ build-local: build-local-sender build-local-receiver build-local-loadgen ## Buil
 
 build-local-sender: ## Build sender service Docker image for local use (single platform)
 	@echo "Building sender service for local use..."
-	docker build -t $(REGISTRY)/sender:$(TAG) ./sender
+	docker build -t $(IMAGE_REGISTRY)/sender:$(TAG) ./sender
 
 build-local-receiver: ## Build receiver service Docker image for local use (single platform)
 	@echo "Building receiver service for local use..."
-	docker build -t $(REGISTRY)/receiver:$(TAG) ./receiver
+	docker build -t $(IMAGE_REGISTRY)/receiver:$(TAG) ./receiver
 
 build-local-loadgen: ## Build loadgen service Docker image for local use (single platform)
 	@echo "Building loadgen service for local use..."
-	docker build -t $(REGISTRY)/loadgen:$(TAG) ./loadgen
+	docker build -t $(IMAGE_REGISTRY)/loadgen:$(TAG) ./loadgen
 
 push: push-sender push-receiver push-loadgen ## Push all Docker images (rebuilds and pushes)
 
@@ -102,7 +106,7 @@ push-sender: setup-buildx ## Push sender service Docker image (multi-platform)
 	@echo "Building and pushing sender service for platforms: $(PLATFORMS)..."
 	docker buildx build \
 		--platform $(PLATFORMS) \
-		-t $(REGISTRY)/sender:$(TAG) \
+		-t $(IMAGE_REGISTRY)/sender:$(TAG) \
 		--push \
 		./sender
 
@@ -110,7 +114,7 @@ push-receiver: setup-buildx ## Push receiver service Docker image (multi-platfor
 	@echo "Building and pushing receiver service for platforms: $(PLATFORMS)..."
 	docker buildx build \
 		--platform $(PLATFORMS) \
-		-t $(REGISTRY)/receiver:$(TAG) \
+		-t $(IMAGE_REGISTRY)/receiver:$(TAG) \
 		--push \
 		./receiver
 
@@ -118,57 +122,27 @@ push-loadgen: setup-buildx ## Push loadgen service Docker image (multi-platform)
 	@echo "Building and pushing loadgen service for platforms: $(PLATFORMS)..."
 	docker buildx build \
 		--platform $(PLATFORMS) \
-		-t $(REGISTRY)/loadgen:$(TAG) \
+		-t $(IMAGE_REGISTRY)/loadgen:$(TAG) \
 		--push \
 		./loadgen
 
 deploy-tenant1: ## Deploy tenant 1 to Kubernetes
 	@echo "Deploying tenant 1..."
-	@kubectl create namespace $(NAMESPACE_TENANT1) --dry-run=client -o yaml | kubectl apply -f -
-	@if [ -n "$(IMAGE_REGISTRY)" ]; then \
-		helm upgrade --install demo-app-tenant1 $(HELM_CHART) \
-			--namespace $(NAMESPACE_TENANT1) \
-			--values $(HELM_CHART)/values-tenant1.yaml \
-			--set global.otlpEndpoint=$(OTLP_ENDPOINT) \
-			--set global.imageRegistry=$(IMAGE_REGISTRY) \
-			--set sender.image.repository=sender \
-			--set sender.image.tag=$(TAG) \
-			--set receiver.image.repository=receiver \
-			--set receiver.image.tag=$(TAG); \
-	else \
-		helm upgrade --install demo-app-tenant1 $(HELM_CHART) \
-			--namespace $(NAMESPACE_TENANT1) \
-			--values $(HELM_CHART)/values-tenant1.yaml \
-			--set global.otlpEndpoint=$(OTLP_ENDPOINT) \
-			--set sender.image.repository=$(REGISTRY)/sender \
-			--set sender.image.tag=$(TAG) \
-			--set receiver.image.repository=$(REGISTRY)/receiver \
-			--set receiver.image.tag=$(TAG); \
-	fi
+	@HELM_ARGS="--namespace $(NAMESPACE_TENANT1) --create-namespace --values $(HELM_CHART)/values-tenant1.yaml"; \
+	if [ "$(USE_DEPLOYMENT_ENDPOINT)" = "true" ]; then \
+		HELM_ARGS="$$HELM_ARGS --set global.useNodeLocalEndpoint=false --set global.otlpEndpoint=$(OTLP_ENDPOINT)"; \
+	fi; \
+	HELM_ARGS="$$HELM_ARGS --set global.imageRegistry=$(IMAGE_REGISTRY) --set sender.image.repository=sender --set sender.image.tag=$(TAG) --set receiver.image.repository=receiver --set receiver.image.tag=$(TAG)"; \
+	helm upgrade --install demo-app-tenant1 $(HELM_CHART) $$HELM_ARGS
 
 deploy-tenant2: ## Deploy tenant 2 to Kubernetes
 	@echo "Deploying tenant 2..."
-	@kubectl create namespace $(NAMESPACE_TENANT2) --dry-run=client -o yaml | kubectl apply -f -
-	@if [ -n "$(IMAGE_REGISTRY)" ]; then \
-		helm upgrade --install demo-app-tenant2 $(HELM_CHART) \
-			--namespace $(NAMESPACE_TENANT2) \
-			--values $(HELM_CHART)/values-tenant2.yaml \
-			--set global.otlpEndpoint=$(OTLP_ENDPOINT) \
-			--set global.imageRegistry=$(IMAGE_REGISTRY) \
-			--set sender.image.repository=sender \
-			--set sender.image.tag=$(TAG) \
-			--set receiver.image.repository=receiver \
-			--set receiver.image.tag=$(TAG); \
-	else \
-		helm upgrade --install demo-app-tenant2 $(HELM_CHART) \
-			--namespace $(NAMESPACE_TENANT2) \
-			--values $(HELM_CHART)/values-tenant2.yaml \
-			--set global.otlpEndpoint=$(OTLP_ENDPOINT) \
-			--set sender.image.repository=$(REGISTRY)/sender \
-			--set sender.image.tag=$(TAG) \
-			--set receiver.image.repository=$(REGISTRY)/receiver \
-			--set receiver.image.tag=$(TAG); \
-	fi
+	@HELM_ARGS="--namespace $(NAMESPACE_TENANT2) --create-namespace --values $(HELM_CHART)/values-tenant2.yaml"; \
+	if [ "$(USE_DEPLOYMENT_ENDPOINT)" = "true" ]; then \
+		HELM_ARGS="$$HELM_ARGS --set global.useNodeLocalEndpoint=false --set global.otlpEndpoint=$(OTLP_ENDPOINT)"; \
+	fi; \
+	HELM_ARGS="$$HELM_ARGS --set global.imageRegistry=$(IMAGE_REGISTRY) --set sender.image.repository=sender --set sender.image.tag=$(TAG) --set receiver.image.repository=receiver --set receiver.image.tag=$(TAG)"; \
+	helm upgrade --install demo-app-tenant2 $(HELM_CHART) $$HELM_ARGS
 
 deploy-all: deploy-tenant1 deploy-tenant2 ## Deploy both tenants
 
@@ -230,7 +204,7 @@ test-tenant2: ## Send a test request to tenant 2 (requires port-forward)
 
 clean: ## Clean up local Docker images
 	@echo "Cleaning up Docker images..."
-	docker rmi $(REGISTRY)/sender:$(TAG) || true
-	docker rmi $(REGISTRY)/receiver:$(TAG) || true
-	docker rmi $(REGISTRY)/loadgen:$(TAG) || true
+	docker rmi $(IMAGE_REGISTRY)/sender:$(TAG) || true
+	docker rmi $(IMAGE_REGISTRY)/receiver:$(TAG) || true
+	docker rmi $(IMAGE_REGISTRY)/loadgen:$(TAG) || true
 
