@@ -122,6 +122,9 @@ spec:
               # Matches Prometheus (node_cpu..., container_memory...)
               - ^(node|container|kube)_(cpu|memory|network|fs|filesystem|node|pod|deployment|daemonset|statefulset|hpa|resourcequota)_.*$
 
+              # HTTP and gRPC metrics
+              - ^(http|grpc)\..*$
+
       memory_limiter:
         check_interval: 5s
         limit_percentage: 80
