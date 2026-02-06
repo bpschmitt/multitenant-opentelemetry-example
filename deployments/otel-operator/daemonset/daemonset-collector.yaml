@@ -51,8 +51,11 @@ spec:
 
       debug: {}
 
+      debug/detailed:
+        verbosity: detailed
+
       otlphttp/gateway:
-        endpoint: http://opentelemetry-collector-deployment-collector.observability.svc.cluster.local:4318
+        endpoint: http://opentelemetry-collector-gateway-collector.observability.svc.cluster.local:4318
 
       otlphttp/newrelic:
         endpoint: https://otlp.nr-data.net
@@ -64,13 +67,24 @@ spec:
         endpoint: ${env:MY_POD_IP}:13133
 
     processors:
-      batch: {}
+
+      batch:
+        send_batch_max_size: 1000
+        timeout: 30s
+        send_batch_size : 800
+  
       cumulativetodelta: {}
 
-      # resourcedetection/env:
-      #   detectors: [env]
-      #   timeout: 2s
-      #   override: false
+      metricstransform/k8s_cluster_info:
+        transforms:
+          - include: kubernetes_build_info
+            action: update
+            new_name: k8s.cluster.info
+
+      resourcedetection/openshift:
+        detectors: [openshift]
+        timeout: 2s
+        override: false
       
       resource/cluster_name:
         attributes:
@@ -78,11 +92,11 @@ spec:
           action: upsert
           value: ${env:K8S_CLUSTER_NAME}
 
-      # resource/entity_type:
-      #   attributes:
-      #   - key: newrelic.entity.type
-      #     action: upsert
-      #     value: "k8s"
+      resource/entity_type:
+        attributes:
+        - key: newrelic.entity.type
+          action: upsert
+          value: "k8s"
         
       k8sattributes:
         extract:
@@ -106,7 +120,9 @@ spec:
           - container.image.tag
           - container.image.name
           - k8s.cluster.uid
+          - service.namespace
           - service.name
+          - service.version
           - service.instance.id
           otel_annotations: true
         filter:
@@ -121,12 +137,98 @@ spec:
             name: k8s.pod.uid
         - sources:
           - from: connection
+
+      transform/ksm:
+        metric_statements:
+          - delete_key(resource.attributes, "k8s.node.name")
+          - delete_key(resource.attributes, "k8s.namespace.name")
+          - delete_key(resource.attributes, "k8s.pod.uid")
+          - delete_key(resource.attributes, "k8s.pod.name")
+          - delete_key(resource.attributes, "k8s.container.name")
+          - delete_key(resource.attributes, "k8s.replicaset.name")
+          - delete_key(resource.attributes, "k8s.deployment.name")
+          - delete_key(resource.attributes, "k8s.statefulset.name")
+          - delete_key(resource.attributes, "k8s.daemonset.name")
+          - delete_key(resource.attributes, "k8s.job.name")
+          - delete_key(resource.attributes, "k8s.cronjob.name")
+          - delete_key(resource.attributes, "k8s.replicationcontroller.name")
+          - delete_key(resource.attributes, "k8s.hpa.name")
+          - delete_key(resource.attributes, "k8s.resourcequota.name")
+          - delete_key(resource.attributes, "k8s.volume.name")
+          - set(resource.attributes["k8s.pod.uid"], resource.attributes["uid"])
+          - set(resource.attributes["k8s.node.name"], resource.attributes["node"])
+          - set(resource.attributes["k8s.namespace.name"], resource.attributes["namespace"])
+          - set(resource.attributes["k8s.pod.name"], resource.attributes["pod"])
+          - set(resource.attributes["k8s.container.name"], resource.attributes["container"])
+          - set(resource.attributes["k8s.replicaset.name"], resource.attributes["replicaset"])
+          - set(resource.attributes["k8s.deployment.name"], resource.attributes["deployment"])
+          - set(resource.attributes["k8s.statefulset.name"], resource.attributes["statefulset"])
+          - set(resource.attributes["k8s.daemonset.name"], resource.attributes["daemonset"])
+          - set(resource.attributes["k8s.job.name"], resource.attributes["job_name"])
+          - set(resource.attributes["k8s.cronjob.name"], resource.attributes["cronjob"])
+          - set(resource.attributes["k8s.replicationcontroller.name"], resource.attributes["replicationcontroller"])
+          - set(resource.attributes["k8s.hpa.name"], resource.attributes["horizontalpodautoscaler"])
+          - set(resource.attributes["k8s.resourcequota.name"], resource.attributes["resourcequota"])
+          - set(resource.attributes["k8s.volume.name"], resource.attributes["persistentvolume"])
+          - set(resource.attributes["k8s.pvc.name"], resource.attributes["persistentvolumeclaim"])
+          - delete_key(resource.attributes, "uid")
+          - delete_key(resource.attributes, "node")
+          - delete_key(resource.attributes, "namespace")
+          - delete_key(resource.attributes, "pod")
+          - delete_key(resource.attributes, "container")
+          - delete_key(resource.attributes, "replicaset")
+          - delete_key(resource.attributes, "deployment")
+          - delete_key(resource.attributes, "statefulset")
+          - delete_key(resource.attributes, "daemonset")
+          - delete_key(resource.attributes, "job_name")
+          - delete_key(resource.attributes, "cronjob")
+          - delete_key(resource.attributes, "replicationcontroller")
+          - delete_key(resource.attributes, "horizontalpodautoscaler")
+          - delete_key(resource.attributes, "resourcequota")
+          - delete_key(resource.attributes, "persistentvolume")
+          - delete_key(resource.attributes, "persistentvolumeclaim")
+
+      groupbyattrs:
+        keys:
+          - pod
+          - uid
+          - container
+          - daemonset
+          - replicaset
+          - statefulset
+          - deployment
+          - cronjob
+          - configmap
+          - job
+          - job_name
+          - horizontalpodautoscaler
+          - persistentvolume
+          - persistentvolumeclaim
+          - endpoint
+          - mutatingwebhookconfiguration
+          - validatingwebhookconfiguration
+          - lease
+          - storageclass
+          - secret
+          - service
+          - resourcequota
+          - node
+          - namespace
+
       memory_limiter:
         check_interval: 5s
         limit_percentage: 80
         spike_limit_percentage: 25
 
     receivers:
+    
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
       filelog:
         exclude:
         - /var/log/pods/otel-collector_opentelemetry-collector-daemonset*_*/opentelemetry-collector/*.log
@@ -143,59 +245,56 @@ spec:
         start_at: end
 
       hostmetrics:
-        collection_interval: 30s
         root_path: /hostfs
+        collection_interval: 30s
         scrapers:
           cpu:
             metrics:
               system.cpu.time:
-                enabled: true
+                enabled: false
               system.cpu.utilization:
                 enabled: true
-          filesystem:
-            exclude_fs_types:
-              fs_types:
-              - autofs
-              - binfmt_misc
-              - bpf
-              - cgroup2
-              - configfs
-              - debugfs
-              - devpts
-              - devtmpfs
-              - fusectl
-              - hugetlbfs
-              - iso9660
-              - mqueue
-              - nsfs
-              - overlay
-              - proc
-              - procfs
-              - pstore
-              - rpc_pipefs
-              - securityfs
-              - selinuxfs
-              - squashfs
-              - sysfs
-              - tracefs
-              match_type: strict
-            exclude_mount_points:
-              match_type: regexp
-              mount_points:
-              - /dev/*
-              - /proc/*
-              - /sys/*
-              - /run/k3s/containerd/*
-              - /var/lib/docker/*
-              - /var/lib/kubelet/*
-              - /snap/*
+              system.cpu.logical.count:
+                enabled: true
+          load:
           memory:
             metrics:
-              system.memory.usage:
-                enabled: true
               system.memory.utilization:
                 enabled: true
+          paging:
+            metrics:
+              system.paging.utilization:
+                enabled: false
+              system.paging.faults:
+                enabled: false
+          filesystem:
+            metrics:
+              system.filesystem.utilization:
+                enabled: true
+          disk:
+            metrics:
+              system.disk.merged:
+                enabled: false
+              system.disk.pending_operations:
+                enabled: false
+              system.disk.weighted_io_time:
+                enabled: false
           network:
+            metrics:
+              system.network.connections:
+                enabled: false
+          # Uncomment to enable process metrics, which can be noisy but valuable.
+          # processes:
+          # process:
+          #   metrics:
+          #     process.cpu.utilization:
+          #       enabled: true
+          #     process.cpu.time:
+          #       enabled: false
+          #   mute_process_name_error: true
+          #   mute_process_exe_error: true
+          #   mute_process_io_error: true
+          #   mute_process_user_error: true
 
       kubeletstats:
         auth_type: serviceAccount
@@ -214,12 +313,63 @@ spec:
           k8s.pod.memory_request_utilization:
             enabled: true
 
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
+      prometheus/cadvisor:
+        config:
+          scrape_configs:
+            - job_name: 'cadvisor'
+              scheme: https
+              metrics_path: /metrics/cadvisor
+              kubernetes_sd_configs:
+                - role: node
+                  selectors:
+                    - role: node
+                      # only scrape data from pods running on the same node as collector
+                      field: "metadata.name=${K8S_NODE_NAME}"
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                insecure_skip_verify: true # Adjust based on your security policy
+              bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              relabel_configs:
+                # Ensures we hit the Kubelet's secure port (usually 10250)
+                - action: labelmap
+                  regex: __meta_kubernetes_node_label_(.+)
+                - target_label: __address__
+                  replacement: kubernetes.default.svc:443
+                - source_labels: [__meta_kubernetes_node_name]
+                  regex: (.+)
+                  target_label: __metrics_path__
+                  replacement: /api/v1/nodes/$${1}/proxy/metrics/cadvisor
+                - action: replace
+                  target_label: job_label
+                  replacement: cadvisor
+                  
+            - job_name: 'kubelet'
+              scheme: https
+              metrics_path: /metrics
+              kubernetes_sd_configs:
+                - role: node
+                  selectors:
+                    - role: node
+                      # only scrape data from pods running on the same node as collector
+                      field: "metadata.name=${K8S_NODE_NAME}"
+              # OpenShift Kubelets use self-signed certs by default
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                insecure_skip_verify: true # Adjust based on your security policy
+              # Bearer token for authentication
+              bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              relabel_configs:
+                - action: labelmap
+                  regex: __meta_kubernetes_node_label_(.+)
+                - target_label: __address__
+                  replacement: kubernetes.default.svc:443
+                - source_labels: [__meta_kubernetes_node_name]
+                  regex: (.+)
+                  target_label: __metrics_path__
+                  replacement: /api/v1/nodes/$${1}/proxy/metrics
+                - action: replace
+                  target_label: job_label
+                  replacement: kubelet
 
     service:
       extensions:
@@ -236,27 +386,54 @@ spec:
           - batch
           exporters:
           - otlphttp/gateway
+
         metrics/otlp:
           receivers:
           - otlp
           processors:
           - memory_limiter
+          - cumulativetodelta
           - k8sattributes
           - resource/cluster_name
           - batch
           exporters:
           - otlphttp/gateway
+
         metrics/infra:
           receivers:
           - hostmetrics
           - kubeletstats
           processors:
           - memory_limiter
+          - cumulativetodelta
+          - metricstransform/k8s_cluster_info
+          - resourcedetection/openshift
           - k8sattributes
           - resource/cluster_name
+          - resource/entity_type
           - batch
           exporters:
           - otlphttp/gateway
+          # - debug/detailed
+
+        metrics/cadvisor:
+          receivers:
+          - prometheus/cadvisor
+          processors:
+          - memory_limiter
+          - cumulativetodelta
+          - metricstransform/k8s_cluster_info
+          - resourcedetection/openshift
+          - groupbyattrs
+          - transform/ksm
+          - k8sattributes
+          - resource/cluster_name
+          - resource/entity_type
+          - batch
+          exporters:
+          - otlphttp/gateway
+        #   - debug/detailed
+
         traces:
           receivers:
             - otlp

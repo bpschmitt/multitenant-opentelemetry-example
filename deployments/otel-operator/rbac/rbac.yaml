@@ -17,8 +17,8 @@ rules:
   - namespaces/status
   - nodes
   - nodes/spec
+  - nodes/metrics
   - nodes/stats
-  - nodes/stats/summary
   - nodes/proxy
   - pods
   - pods/status
@@ -26,6 +26,7 @@ rules:
   - replicationcontrollers/status
   - resourcequotas
   - services
+  - endpoints
   verbs:
   - get
   - list
@@ -68,6 +69,17 @@ rules:
     - get
     - list
     - watch
+- apiGroups: 
+  - config.openshift.io
+  resources:
+  - infrastructures
+  - infrastructures/status
+  verbs:
+  - get
+  - watch
+  - list
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
