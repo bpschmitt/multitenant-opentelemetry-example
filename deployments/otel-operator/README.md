@@ -11,6 +11,7 @@ The OpenTelemetry Operator provides CRD-based management of OpenTelemetry Collec
 - Kubernetes cluster (1.20+)
 - Helm 3.x
 - kubectl configured
+- cert-manager installed
 - New Relic account with license keys:
   - Default license key (for non-tenant namespaces)
   - Tenant 1 license key (optional, for tenant1-demo namespace)
@@ -19,7 +20,36 @@ The OpenTelemetry Operator provides CRD-based management of OpenTelemetry Collec
 
 ## Installation
 
-### 1. Install OpenTelemetry Operator
+### 1. Install cert-manager
+
+The OpenTelemetry Operator requires cert-manager for webhook certificate management.
+
+```bash
+# Install cert-manager using Helm
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+
+# Install cert-manager
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --set installCRDs=true
+
+# Verify installation
+kubectl get pods -n cert-manager
+```
+
+**Alternative installation method (kubectl):**
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+```
+
+**Verify cert-manager is ready:**
+```bash
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=300s
+```
+
+### 2. Install OpenTelemetry Operator
 
 ```bash
 # Add the OpenTelemetry Helm repository (if not already added)
@@ -27,10 +57,17 @@ helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm
 helm repo update
 
 # Install the operator
-helm install opentelemetry-operator open-telemetry/opentelemetry-operator \
+helm upgrade --install opentelemetry-operator open-telemetry/opentelemetry-operator \
   --namespace observability \
   --create-namespace \
   --values operator/values.yaml
+```
+
+**Apply RBAC resources** (required before deploying any collectors):
+```bash
+# RBAC must be applied before deploying gateway, deployment, or daemonset collectors
+# All collectors use the same otel-collector service account
+kubectl apply -f rbac/rbac.yaml
 ```
 
 **For OpenShift clusters**, you may need to configure Security Context Constraints (SCC) first:
@@ -45,10 +82,9 @@ kubectl get pods -n observability
 kubectl get crd | grep opentelemetry
 ```
 
-### 2. Create Namespace and Secrets
+### 3. Create Secrets
 
 ```bash
-kubectl create namespace observability
 kubectl create secret generic newrelic-license-key \
   --from-literal=license-key='YOUR_NEW_RELIC_LICENSE_KEY' \
   -n observability
@@ -60,32 +96,46 @@ kubectl create secret generic newrelic-license-key-tenant2 \
   -n observability
 ```
 
-### 3. Deploy Collectors
+### 4. Deploy Collectors
+
+The gateway collector must be deployed first, as both the deployment and daemonset collectors send telemetry to it. The gateway then forwards all telemetry to New Relic.
+
+#### Gateway Collector (Required)
+
+The gateway collector acts as the central hub that receives telemetry from other collectors and forwards it to New Relic.
+
+```bash
+# Install the gateway collector using OpenTelemetryCollector custom resource
+# This must be deployed before deployment or daemonset collectors
+kubectl apply -f gateway/gateway-collector.yaml
+```
 
 #### Deployment Mode (Recommended for centralized collection and multi-tenant routing)
 
-```bash
-# Apply RBAC resources
-kubectl apply -f daemonset/rbac.yaml
+The deployment collector sends telemetry to the gateway collector.
 
+```bash
 # Install the deployment collector using OpenTelemetryCollector custom resource
 kubectl apply -f deployment/deployment-collector.yaml
 ```
 
 #### Daemonset Mode (Recommended for node, pod, container metrics and logs)
 
+The daemonset collector sends telemetry to the gateway collector.
+
 ```bash
-# Install deployment gateway first (see above)
-# Then install daemonset using OpenTelemetryCollector custom resource
+# Install daemonset using OpenTelemetryCollector custom resource
+# Ensure the gateway collector is deployed first (see Gateway Collector above)
 kubectl apply -f daemonset/daemonset-collector.yaml
 ```
 
 ## Configuration Files
 
 - **`operator/values.yaml`**: Helm values for OpenTelemetry Operator installation
+- **`gateway/gateway-collector.yaml`**: OpenTelemetryCollector CRD for gateway mode (central hub that receives telemetry from other collectors)
 - **`deployment/deployment-collector.yaml`**: OpenTelemetryCollector CRD for deployment mode
 - **`daemonset/daemonset-collector.yaml`**: OpenTelemetryCollector CRD for daemonset mode
-- **`daemonset/rbac.yaml`**: RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding)
+- **`rbac/rbac.yaml`**: RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding)
 
 ## Features
 
