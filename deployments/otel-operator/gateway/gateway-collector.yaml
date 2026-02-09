@@ -49,11 +49,11 @@ spec:
         default_pipelines:
         - logs/default
         table:
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
+        - condition: resource.attributes["label.quota.id"] == "tenant1" or resource.attributes["k8s.namespace.name"] == "tenant1-demo"
           context: log
           pipelines:
           - logs/tenant1
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
+        - condition: resource.attributes["label.quota.id"] == "tenant2" or resource.attributes["k8s.namespace.name"] == "tenant2-demo"
           context: log
           pipelines:
           - logs/tenant2
@@ -62,22 +62,22 @@ spec:
         default_pipelines:
         - metrics/default
         table:
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
+        - condition: resource.attributes["label.quota.id"] == "tenant1" or resource.attributes["k8s.namespace.name"] == "tenant1-demo"
           context: metric
           pipelines:
           - metrics/tenant1
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
+        - condition: resource.attributes["label.quota.id"] == "tenant2" or resource.attributes["k8s.namespace.name"] == "tenant2-demo"
           context: metric
           pipelines:
           - metrics/tenant2
 
       routing/traces:
         table:
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
+        - condition: resource.attributes["label.quota.id"] == "tenant1" or resource.attributes["k8s.namespace.name"] == "tenant1-demo"
           context: span
           pipelines:
           - traces/tenant1
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
+        - condition: resource.attributes["label.quota.id"] == "tenant2" or resource.attributes["k8s.namespace.name"] == "tenant2-demo"
           context: span
           pipelines:
           - traces/tenant2

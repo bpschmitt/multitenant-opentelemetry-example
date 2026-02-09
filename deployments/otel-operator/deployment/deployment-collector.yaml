@@ -43,44 +43,6 @@ spec:
       value: "openshift"
 
   config:
-    connectors:
-
-      routing/logs:
-        default_pipelines:
-        - logs/default
-        table:
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
-          context: log
-          pipelines:
-          - logs/tenant1
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
-          context: log
-          pipelines:
-          - logs/tenant2
-
-      routing/metrics:
-        default_pipelines:
-        - metrics/default
-        table:
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
-          context: metric
-          pipelines:
-          - metrics/tenant1
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
-          context: metric
-          pipelines:
-          - metrics/tenant2
-
-      routing/traces:
-        table:
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant1-demo"
-          context: span
-          pipelines:
-          - traces/tenant1
-        - condition: resource.attributes["k8s.namespace.name"] == "tenant2-demo"
-          context: span
-          pipelines:
-          - traces/tenant2
 
     exporters:
 
@@ -91,21 +53,6 @@ spec:
 
       otlphttp/gateway:
         endpoint: http://opentelemetry-collector-gateway-collector.observability.svc.cluster.local:4318
-
-      otlphttp/newrelic:
-        endpoint: https://otlp.nr-data.net
-        headers:
-          api-key: ${NEW_RELIC_LICENSE_KEY}
-
-      otlphttp/tenant1:
-        endpoint: https://otlp.nr-data.net
-        headers:
-          api-key: ${NEW_RELIC_LICENSE_KEY_TENANT1}
-
-      otlphttp/tenant2:
-        endpoint: https://otlp.nr-data.net
-        headers:
-          api-key: ${NEW_RELIC_LICENSE_KEY_TENANT2}
 
     extensions:
       health_check:
@@ -433,7 +380,6 @@ spec:
           - batch
           exporters:
           - otlphttp/gateway
-          # - debug
 
         metrics/nr_controlplane:
           receivers:
@@ -447,7 +393,6 @@ spec:
             - batch
           exporters:
             - otlphttp/gateway
-            # - debug/detailed
 
       telemetry:
         metrics:

@@ -125,6 +125,10 @@ spec:
           - service.version
           - service.instance.id
           otel_annotations: true
+          labels:
+            - tag_name: label.quota.id
+              key: quota-id
+              from: namespace
         filter:
           node_from_env_var: K8S_NODE_NAME
         passthrough: false
@@ -221,7 +225,7 @@ spec:
         spike_limit_percentage: 25
 
     receivers:
-    
+
       otlp:
         protocols:
           grpc:
